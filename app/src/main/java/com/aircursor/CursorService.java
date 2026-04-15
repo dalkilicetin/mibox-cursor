@@ -33,6 +33,10 @@ public class CursorService extends Service {
     private int screenH = 1080;
     private volatile boolean running = true;
 
+    // Gerçek cursor pozisyonu
+    private volatile int realX = 960;
+    private volatile int realY = 540;
+
     @Override
     public void onCreate() {
         super.onCreate();
@@ -49,6 +53,10 @@ public class CursorService extends Service {
         wm.getDefaultDisplay().getMetrics(dm);
         screenW = dm.widthPixels;
         screenH = dm.heightPixels;
+
+        // Başlangıç pozisyonunu ortaya al
+        realX = screenW / 2;
+        realY = screenH / 2;
 
         cursorView = new CursorView(this);
 
@@ -67,16 +75,18 @@ public class CursorService extends Service {
         );
 
         params.gravity = Gravity.TOP | Gravity.LEFT;
-        params.x = screenW / 2;
-        params.y = screenH / 2;
+        params.x = realX;
+        params.y = realY;
 
         wm.addView(cursorView, params);
         Log.i(TAG, "Overlay added. Screen: " + screenW + "x" + screenH);
     }
 
-    private void moveCursor(float x, float y) {
-        params.x = Math.max(0, Math.min((int) x, screenW - 60));
-        params.y = Math.max(0, Math.min((int) y, screenH - 60));
+    private void moveCursor(int x, int y) {
+        realX = Math.max(0, Math.min(x, screenW - 60));
+        realY = Math.max(0, Math.min(y, screenH - 60));
+        params.x = realX;
+        params.y = realY;
         wm.updateViewLayout(cursorView, params);
     }
 
@@ -87,7 +97,7 @@ public class CursorService extends Service {
                 while (running) {
                     try {
                         Socket client = ss.accept();
-                        Log.i(TAG, "Client connected: " + client.getRemoteSocketAddress());
+                        Log.i(TAG, "Client: " + client.getRemoteSocketAddress());
                         handleClient(client);
                     } catch (Exception e) {
                         if (running) Log.w(TAG, "Client error: " + e.getMessage());
@@ -99,17 +109,20 @@ public class CursorService extends Service {
         }).start();
     }
 
-    private void handleClient(Socket client) {
+    private void handleClient(final Socket client) {
         new Thread(() -> {
             try {
                 BufferedReader reader = new BufferedReader(
                     new InputStreamReader(client.getInputStream()));
-                PrintWriter writer = new PrintWriter(client.getOutputStream(), true);
-                writer.println("{\"status\":\"connected\",\"w\":" + screenW + ",\"h\":" + screenH + "}");
+                final PrintWriter writer = new PrintWriter(client.getOutputStream(), true);
+
+                // İlk mesaj: ekran boyutu ve başlangıç cursor pozisyonu
+                writer.println("{\"status\":\"connected\",\"w\":" + screenW +
+                    ",\"h\":" + screenH + ",\"x\":" + realX + ",\"y\":" + realY + "}");
 
                 String line;
                 while ((line = reader.readLine()) != null && running) {
-                    processCommand(line.trim());
+                    processCommand(line.trim(), writer);
                 }
             } catch (Exception e) {
                 Log.d(TAG, "Client disconnected");
@@ -119,40 +132,24 @@ public class CursorService extends Service {
         }).start();
     }
 
-    private void processCommand(String json) {
+    private void processCommand(String json, PrintWriter writer) {
         try {
             JSONObject obj = new JSONObject(json);
             String type = obj.getString("type");
 
             if (type.equals("move")) {
-                float dx = (float) obj.optDouble("dx", 0);
-                float dy = (float) obj.optDouble("dy", 0);
-                mainHandler.post(() -> moveCursor(params.x + dx, params.y + dy));
-
-            } else if (type.equals("gyro")) {
-                float beta  = (float) obj.optDouble("beta",  0);
-                float gamma = (float) obj.optDouble("gamma", 0);
-                float speed = 8f;
-                float dz = 2f;
-                float dx = Math.abs(gamma) > dz ? (gamma > 0 ? gamma - dz : gamma + dz) * speed * 0.05f : 0;
-                float dy = Math.abs(beta)  > dz ? (beta  > 0 ? beta  - dz : beta  + dz) * speed * 0.05f : 0;
-                if (dx != 0 || dy != 0) {
-                    mainHandler.post(() -> moveCursor(params.x + dx, params.y + dy));
-                }
+                int dx = obj.optInt("dx", 0);
+                int dy = obj.optInt("dy", 0);
+                int nx = Math.max(0, Math.min(realX + dx, screenW - 60));
+                int ny = Math.max(0, Math.min(realY + dy, screenH - 60));
+                mainHandler.post(() -> moveCursor(nx, ny));
+                // Gerçek pozisyonu bridge'e gönder
+                writer.println("{\"x\":" + nx + ",\"y\":" + ny + "}");
 
             } else if (type.equals("tap")) {
-                final int tx = params.x;
-                final int ty = params.y;
-                mainHandler.post(() -> {
-                    cursorView.showClick();
-                    try {
-                        Runtime.getRuntime().exec(
-                            new String[]{"input", "tap", String.valueOf(tx), String.valueOf(ty)}
-                        );
-                    } catch (Exception e) {
-                        Log.w(TAG, "Tap error: " + e.getMessage());
-                    }
-                });
+                mainHandler.post(() -> cursorView.showClick());
+                // Gerçek pozisyonu gönder (bridge ADB tap için kullanır)
+                writer.println("{\"tap\":true,\"x\":" + realX + ",\"y\":" + realY + "}");
             }
         } catch (Exception e) {
             Log.w(TAG, "JSON error: " + json);

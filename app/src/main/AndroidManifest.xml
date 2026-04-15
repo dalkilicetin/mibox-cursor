@@ -31,7 +31,6 @@
         <service
             android:name=".CursorService"
             android:exported="false"
-            android:foreground="true" />
 
         <!-- Önyüklemede otomatik başlat -->
         <receiver

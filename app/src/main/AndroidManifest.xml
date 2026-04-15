@@ -1,13 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Ekran üstü overlay çizmek için -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
-    <!-- Dokunma/tıklama enjeksiyonu için -->
-    <uses-permission android:name="android.permission.INJECT_EVENTS" />
-    <!-- Ağ -->
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- Önyüklemede başla -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
@@ -15,7 +10,6 @@
         android:label="AirCursor"
         android:theme="@style/Theme.AppCompat.NoActionBar">
 
-        <!-- Ana aktivite: izin iste + servisi başlat -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -27,12 +21,10 @@
             </intent-filter>
         </activity>
 
-        <!-- Arka planda çalışan cursor servisi -->
         <service
             android:name=".CursorService"
-            android:exported="false"
+            android:exported="false" />
 
-        <!-- Önyüklemede otomatik başlat -->
         <receiver
             android:name=".BootReceiver"
             android:exported="true">

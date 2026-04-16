@@ -153,6 +153,11 @@ public class CursorService extends Service {
             } else if (type.equals("show")) {
                 mainHandler.post(() -> cursorView.setVisibility(android.view.View.VISIBLE));
                 writer.println("{\"hidden\":false}");
+
+            } else if (type.equals("scroll_mode")) {
+                int mode = obj.optInt("mode", 0);
+                mainHandler.post(() -> cursorView.setScrollMode(mode));
+                writer.println("{\"scroll_mode\":" + mode + "}");
             }
 
         } catch (Exception e) {

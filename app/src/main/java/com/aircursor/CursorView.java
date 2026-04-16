@@ -5,47 +5,42 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Path;
+import android.graphics.RadialGradient;
+import android.graphics.Shader;
 import android.view.View;
 
 public class CursorView extends View {
 
-    private final Paint redPaint;
-    private final Paint redFadePaint;
-    private final Paint redFade2Paint;
-    private final Paint whitePaint;
+    // %30 kucultuldu: 28 -> 20
+    private final float R = 20f;
 
-    private final float R  = 22f;   // ana çember yarıçapı
-    private final float DOT = 4f;   // merkez nokta
-    private final float GAP = 5f;   // çember ile çizgi arası boşluk
-    private final float LINE = 8f;  // çizgi uzunluğu
+    private Paint ballPaint;
+    private Paint highlightPaint;
+    private Paint edgePaint;
+    private Paint arrowPaint;
 
-    // Scroll modu: 0=normal, 1=dikey, 2=yatay
+    // 0=normal, 1=dikey, 2=yatay
     private int scrollMode = 0;
-
-    // Tıklama animasyonu
     private boolean clicking = false;
 
     public CursorView(Context context) {
         super(context);
 
-        redPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        redPaint.setColor(0xFFFF3B30);
-        redPaint.setStyle(Paint.Style.STROKE);
-        redPaint.setStrokeWidth(2.5f);
+        ballPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        ballPaint.setStyle(Paint.Style.FILL);
 
-        redFadePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        redFadePaint.setColor(0x99FF3B30);
-        redFadePaint.setStyle(Paint.Style.STROKE);
-        redFadePaint.setStrokeWidth(1.5f);
+        highlightPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        highlightPaint.setStyle(Paint.Style.FILL);
+        highlightPaint.setColor(0x55FFFFFF);
 
-        redFade2Paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        redFade2Paint.setColor(0x44FF3B30);
-        redFade2Paint.setStyle(Paint.Style.STROKE);
-        redFade2Paint.setStrokeWidth(1f);
+        edgePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        edgePaint.setStyle(Paint.Style.STROKE);
+        edgePaint.setStrokeWidth(1f);
+        edgePaint.setColor(0x22000000);
 
-        whitePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        whitePaint.setColor(Color.WHITE);
-        whitePaint.setStyle(Paint.Style.FILL);
+        arrowPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        arrowPaint.setStyle(Paint.Style.FILL);
+        arrowPaint.setColor(0xFF333333);
     }
 
     public void setScrollMode(int mode) {
@@ -62,6 +57,26 @@ public class CursorView extends View {
         }, 200);
     }
 
+    private void setupBallGradient(Canvas canvas, float cx, float cy, boolean isClick) {
+        RadialGradient gradient;
+        if (isClick) {
+            gradient = new RadialGradient(
+                cx - R * 0.3f, cy - R * 0.3f, R * 1.2f,
+                new int[]{0xFFFF8888, 0xFFDD3333, 0xFFBB1111},
+                new float[]{0f, 0.5f, 1f},
+                Shader.TileMode.CLAMP
+            );
+        } else {
+            gradient = new RadialGradient(
+                cx - R * 0.3f, cy - R * 0.3f, R * 1.2f,
+                new int[]{0xFFFFFFFF, 0xFFDDDDDD, 0xFF999999},
+                new float[]{0f, 0.45f, 1f},
+                Shader.TileMode.CLAMP
+            );
+        }
+        ballPaint.setShader(gradient);
+    }
+
     @Override
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
@@ -69,113 +84,83 @@ public class CursorView extends View {
         float cx = getWidth() / 2f;
         float cy = getHeight() / 2f;
 
-        if (clicking) {
-            // Tıklama: patlama efekti - 3 iç içe daire
-            Paint fillClick = new Paint(Paint.ANTI_ALIAS_FLAG);
-            fillClick.setStyle(Paint.Style.FILL);
-            fillClick.setColor(0xFFFF3B30);
-            canvas.drawCircle(cx, cy, R * 0.7f, fillClick);
+        setupBallGradient(canvas, cx, cy, clicking);
 
-            canvas.drawCircle(cx, cy, R * 1.2f, redFadePaint);
-            canvas.drawCircle(cx, cy, R * 1.7f, redFade2Paint);
-            return;
-        }
+        // Top
+        canvas.drawCircle(cx, cy, R, ballPaint);
+        canvas.drawCircle(cx, cy, R, edgePaint);
 
-        // Ana çember
-        canvas.drawCircle(cx, cy, R, redPaint);
+        // Highlight (sol üst parlaklık)
+        canvas.drawCircle(cx - R * 0.28f, cy - R * 0.28f, R * 0.45f, highlightPaint);
 
-        // Merkez nokta
-        Paint dotPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        dotPaint.setColor(0xFFFF3B30);
-        dotPaint.setStyle(Paint.Style.FILL);
-        canvas.drawCircle(cx, cy, DOT, dotPaint);
-
-        if (scrollMode == 0) {
-            // Normal: 4 yönde kısa çizgi
-            drawLines4(canvas, cx, cy);
-        } else if (scrollMode == 1) {
-            // Dikey scroll: yukarı ve aşağı ok
-            drawLines4(canvas, cx, cy);
-            drawArrowUp(canvas, cx, cy);
-            drawArrowDown(canvas, cx, cy);
-        } else if (scrollMode == 2) {
-            // Yatay scroll: sağ ve sol ok
-            drawLines4(canvas, cx, cy);
-            drawArrowLeft(canvas, cx, cy);
-            drawArrowRight(canvas, cx, cy);
+        if (!clicking) {
+            if (scrollMode == 1) {
+                drawVerticalArrows(canvas, cx, cy);
+            } else if (scrollMode == 2) {
+                drawHorizontalArrows(canvas, cx, cy);
+            }
         }
     }
 
-    private void drawLines4(Canvas canvas, float cx, float cy) {
-        // Sağ
-        canvas.drawLine(cx + R + GAP, cy, cx + R + GAP + LINE, cy, redPaint);
-        // Sol
-        canvas.drawLine(cx - R - GAP, cy, cx - R - GAP - LINE, cy, redPaint);
-        // Üst
-        canvas.drawLine(cx, cy - R - GAP, cx, cy - R - GAP - LINE, redPaint);
-        // Alt
-        canvas.drawLine(cx, cy + R + GAP, cx, cy + R + GAP + LINE, redPaint);
+    private void drawVerticalArrows(Canvas canvas, float cx, float cy) {
+        float as = R * 0.38f; // ok boyutu
+        float gap = R * 0.18f;
+
+        // Yukari ok
+        Path up = new Path();
+        up.moveTo(cx, cy - gap - as);
+        up.lineTo(cx - as * 0.7f, cy - gap);
+        up.lineTo(cx + as * 0.7f, cy - gap);
+        up.close();
+        canvas.drawPath(up, arrowPaint);
+
+        // Asagi ok
+        Path down = new Path();
+        down.moveTo(cx, cy + gap + as);
+        down.lineTo(cx - as * 0.7f, cy + gap);
+        down.lineTo(cx + as * 0.7f, cy + gap);
+        down.close();
+        canvas.drawPath(down, arrowPaint);
+
+        // Orta cizgi
+        Paint linePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        linePaint.setColor(0x88333333);
+        linePaint.setStyle(Paint.Style.STROKE);
+        linePaint.setStrokeWidth(1.5f);
+        canvas.drawLine(cx, cy - gap + 2, cx, cy + gap - 2, linePaint);
     }
 
-    private void drawArrowUp(Canvas canvas, float cx, float cy) {
-        float base = cy - R - GAP - LINE - 4f;
-        float hs = 7f;
-        Path p = new Path();
-        p.moveTo(cx, base - hs);
-        p.lineTo(cx - hs, base);
-        p.lineTo(cx + hs, base);
-        p.close();
-        Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
-        fill.setColor(0xFFFF3B30);
-        fill.setStyle(Paint.Style.FILL);
-        canvas.drawPath(p, fill);
-    }
+    private void drawHorizontalArrows(Canvas canvas, float cx, float cy) {
+        float as = R * 0.38f;
+        float gap = R * 0.18f;
 
-    private void drawArrowDown(Canvas canvas, float cx, float cy) {
-        float base = cy + R + GAP + LINE + 4f;
-        float hs = 7f;
-        Path p = new Path();
-        p.moveTo(cx, base + hs);
-        p.lineTo(cx - hs, base);
-        p.lineTo(cx + hs, base);
-        p.close();
-        Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
-        fill.setColor(0xFFFF3B30);
-        fill.setStyle(Paint.Style.FILL);
-        canvas.drawPath(p, fill);
-    }
+        // Sol ok
+        Path left = new Path();
+        left.moveTo(cx - gap - as, cy);
+        left.lineTo(cx - gap, cy - as * 0.7f);
+        left.lineTo(cx - gap, cy + as * 0.7f);
+        left.close();
+        canvas.drawPath(left, arrowPaint);
 
-    private void drawArrowLeft(Canvas canvas, float cx, float cy) {
-        float base = cx - R - GAP - LINE - 4f;
-        float hs = 7f;
-        Path p = new Path();
-        p.moveTo(base - hs, cy);
-        p.lineTo(base, cy - hs);
-        p.lineTo(base, cy + hs);
-        p.close();
-        Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
-        fill.setColor(0xFFFF3B30);
-        fill.setStyle(Paint.Style.FILL);
-        canvas.drawPath(p, fill);
-    }
+        // Sag ok
+        Path right = new Path();
+        right.moveTo(cx + gap + as, cy);
+        right.lineTo(cx + gap, cy - as * 0.7f);
+        right.lineTo(cx + gap, cy + as * 0.7f);
+        right.close();
+        canvas.drawPath(right, arrowPaint);
 
-    private void drawArrowRight(Canvas canvas, float cx, float cy) {
-        float base = cx + R + GAP + LINE + 4f;
-        float hs = 7f;
-        Path p = new Path();
-        p.moveTo(base + hs, cy);
-        p.lineTo(base, cy - hs);
-        p.lineTo(base, cy + hs);
-        p.close();
-        Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
-        fill.setColor(0xFFFF3B30);
-        fill.setStyle(Paint.Style.FILL);
-        canvas.drawPath(p, fill);
+        // Orta cizgi
+        Paint linePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        linePaint.setColor(0x88333333);
+        linePaint.setStyle(Paint.Style.STROKE);
+        linePaint.setStrokeWidth(1.5f);
+        canvas.drawLine(cx - gap + 2, cy, cx + gap - 2, cy, linePaint);
     }
 
     @Override
     protected void onMeasure(int w, int h) {
-        int size = (int)((R + GAP + LINE + 14f) * 2f);
+        int size = (int)(R * 2.2f);
         setMeasuredDimension(size, size);
     }
 }

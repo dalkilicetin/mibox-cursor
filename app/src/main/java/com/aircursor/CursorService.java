@@ -33,7 +33,6 @@ public class CursorService extends Service {
     private int screenH = 1080;
     private volatile boolean running = true;
 
-    // Gerçek cursor pozisyonu
     private volatile int realX = 960;
     private volatile int realY = 540;
 
@@ -54,7 +53,6 @@ public class CursorService extends Service {
         screenW = dm.widthPixels;
         screenH = dm.heightPixels;
 
-        // Başlangıç pozisyonunu ortaya al
         realX = screenW / 2;
         realY = screenH / 2;
 
@@ -116,7 +114,6 @@ public class CursorService extends Service {
                     new InputStreamReader(client.getInputStream()));
                 final PrintWriter writer = new PrintWriter(client.getOutputStream(), true);
 
-                // İlk mesaj: ekran boyutu ve başlangıç cursor pozisyonu
                 writer.println("{\"status\":\"connected\",\"w\":" + screenW +
                     ",\"h\":" + screenH + ",\"x\":" + realX + ",\"y\":" + realY + "}");
 
@@ -143,14 +140,21 @@ public class CursorService extends Service {
                 int nx = Math.max(0, Math.min(realX + dx, screenW - 60));
                 int ny = Math.max(0, Math.min(realY + dy, screenH - 60));
                 mainHandler.post(() -> moveCursor(nx, ny));
-                // Gerçek pozisyonu bridge'e gönder
                 writer.println("{\"x\":" + nx + ",\"y\":" + ny + "}");
 
             } else if (type.equals("tap")) {
                 mainHandler.post(() -> cursorView.showClick());
-                // Gerçek pozisyonu gönder (bridge ADB tap için kullanır)
                 writer.println("{\"tap\":true,\"x\":" + realX + ",\"y\":" + realY + "}");
+
+            } else if (type.equals("hide")) {
+                mainHandler.post(() -> cursorView.setVisibility(android.view.View.INVISIBLE));
+                writer.println("{\"hidden\":true}");
+
+            } else if (type.equals("show")) {
+                mainHandler.post(() -> cursorView.setVisibility(android.view.View.VISIBLE));
+                writer.println("{\"hidden\":false}");
             }
+
         } catch (Exception e) {
             Log.w(TAG, "JSON error: " + json);
         }

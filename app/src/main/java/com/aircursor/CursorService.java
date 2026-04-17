@@ -189,6 +189,18 @@ public class CursorService extends Service {
 
             } else if (type.equals("tap")) {
                 mainHandler.post(() -> cursorView.showClick());
+                final int tapX = realX;
+                final int tapY = realY;
+                new Thread(() -> {
+                    try {
+                        Runtime.getRuntime().exec(new String[]{
+                            "input", "tap",
+                            String.valueOf(tapX), String.valueOf(tapY)
+                        });
+                    } catch (Exception e) {
+                        Log.w(TAG, "Tap error: " + e.getMessage());
+                    }
+                }).start();
                 writer.println("{\"tap\":true,\"x\":" + realX + ",\"y\":" + realY + "}");
 
             } else if (type.equals("hide")) {

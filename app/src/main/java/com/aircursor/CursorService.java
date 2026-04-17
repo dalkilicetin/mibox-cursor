@@ -191,16 +191,14 @@ public class CursorService extends Service {
                 mainHandler.post(() -> cursorView.showClick());
                 final int tapX = realX;
                 final int tapY = realY;
-                new Thread(() -> {
-                    try {
-                        Runtime.getRuntime().exec(new String[]{
-                            "input", "tap",
-                            String.valueOf(tapX), String.valueOf(tapY)
-                        });
-                    } catch (Exception e) {
-                        Log.w(TAG, "Tap error: " + e.getMessage());
+                mainHandler.post(() -> {
+                    AirCursorAccessibility a11y = AirCursorAccessibility.getInstance();
+                    if (a11y != null) {
+                        a11y.performTap(tapX, tapY);
+                    } else {
+                        Log.w(TAG, "Accessibility service not connected");
                     }
-                }).start();
+                });
                 writer.println("{\"tap\":true,\"x\":" + realX + ",\"y\":" + realY + "}");
 
             } else if (type.equals("hide")) {
@@ -233,13 +231,20 @@ public class CursorService extends Service {
                 }
 
             } else if (type.equals("swipe")) {
-                // Swipe - browser scroll icin
                 int x1 = obj.optInt("x1", screenW / 2);
                 int y1 = obj.optInt("y1", screenH / 2);
                 int x2 = obj.optInt("x2", screenW / 2);
                 int y2 = obj.optInt("y2", screenH / 2 - 200);
                 int dur = obj.optInt("duration", 150);
-                injectSwipe(x1, y1, x2, y2, dur);
+                final int fx1=x1, fy1=y1, fx2=x2, fy2=y2, fdur=dur;
+                mainHandler.post(() -> {
+                    AirCursorAccessibility a11y = AirCursorAccessibility.getInstance();
+                    if (a11y != null) {
+                        a11y.performSwipe(fx1, fy1, fx2, fy2, fdur);
+                    } else {
+                        injectSwipe(fx1, fy1, fx2, fy2, fdur);
+                    }
+                });
                 writer.println("{\"swipe\":true}");
             }
 

@@ -1,5 +1,6 @@
 package com.aircursor;
 
+import android.app.Instrumentation;
 import android.app.Service;
 import android.content.Intent;
 import android.graphics.PixelFormat;
@@ -7,9 +8,14 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.Gravity;
+import android.view.InputDevice;
+import android.view.KeyCharacterMap;
+import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.view.WindowManager;
 
 import java.io.BufferedReader;
@@ -88,6 +94,45 @@ public class CursorService extends Service {
         wm.updateViewLayout(cursorView, params);
     }
 
+    private void injectSwipe(int x1, int y1, int x2, int y2, int durationMs) {
+        new Thread(() -> {
+            try {
+                Runtime.getRuntime().exec(new String[]{
+                    "input", "touchscreen", "swipe",
+                    String.valueOf(x1), String.valueOf(y1),
+                    String.valueOf(x2), String.valueOf(y2),
+                    String.valueOf(durationMs)
+                });
+            } catch (Exception e) {
+                Log.w(TAG, "Swipe error: " + e.getMessage());
+            }
+        }).start();
+    }
+
+    private void injectText(String text) {
+        new Thread(() -> {
+            try {
+                // Bosluk %s olarak gonder
+                String escaped = text.replace(" ", "%s");
+                Runtime.getRuntime().exec(new String[]{"input", "text", escaped});
+            } catch (Exception e) {
+                Log.w(TAG, "Text error: " + e.getMessage());
+            }
+        }).start();
+    }
+
+    private void injectKeyEvent(int keyCode) {
+        new Thread(() -> {
+            try {
+                Runtime.getRuntime().exec(new String[]{
+                    "input", "keyevent", String.valueOf(keyCode)
+                });
+            } catch (Exception e) {
+                Log.w(TAG, "Key error: " + e.getMessage());
+            }
+        }).start();
+    }
+
     private void startSocketServer() {
         new Thread(() -> {
             try (ServerSocket ss = new ServerSocket(PORT)) {
@@ -158,6 +203,32 @@ public class CursorService extends Service {
                 int mode = obj.optInt("mode", 0);
                 mainHandler.post(() -> cursorView.setScrollMode(mode));
                 writer.println("{\"scroll_mode\":" + mode + "}");
+
+            } else if (type.equals("text")) {
+                // Metin gir - PC olmadan klavye
+                String value = obj.optString("value", "");
+                if (!value.isEmpty()) {
+                    injectText(value);
+                    writer.println("{\"text\":true}");
+                }
+
+            } else if (type.equals("key")) {
+                // Keyevent gonder - back, home, dpad vs
+                int code = obj.optInt("code", 0);
+                if (code > 0) {
+                    injectKeyEvent(code);
+                    writer.println("{\"key\":" + code + "}");
+                }
+
+            } else if (type.equals("swipe")) {
+                // Swipe - browser scroll icin
+                int x1 = obj.optInt("x1", screenW / 2);
+                int y1 = obj.optInt("y1", screenH / 2);
+                int x2 = obj.optInt("x2", screenW / 2);
+                int y2 = obj.optInt("y2", screenH / 2 - 200);
+                int dur = obj.optInt("duration", 150);
+                injectSwipe(x1, y1, x2, y2, dur);
+                writer.println("{\"swipe\":true}");
             }
 
         } catch (Exception e) {

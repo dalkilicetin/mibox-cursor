@@ -22,6 +22,10 @@ public class CursorView extends View {
     private float posX = 960;
     private float posY = 540;
 
+    // 0=normal, 1=dikey, 2=yatay
+    private int scrollMode = 0;
+    private boolean clicking = false;
+
     public void updatePosition(float x, float y) {
         posX = x;
         posY = y;

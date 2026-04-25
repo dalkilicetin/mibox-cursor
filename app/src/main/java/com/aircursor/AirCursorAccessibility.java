@@ -218,43 +218,33 @@ public class AirCursorAccessibility extends AccessibilityService {
     }
 
     // Hedefe en çok yaklaştıran DPAD yönünü seç
-    private int chooseBestDirection() {
-        int fx = currentFocusX;
-        int fy = currentFocusY;
-        double bestScore = Double.MAX_VALUE;
-        int bestKey = -1;
+	private int chooseBestDirection() {
+		int fx = currentFocusX;
+		int fy = currentFocusY;
 
-        synchronized (nodeCache) {
-            for (NodeInfo n : nodeCache) {
-                int dx = n.cx - fx;
-                int dy = n.cy - fy;
-                if (Math.abs(dx) < 20 && Math.abs(dy) < 20) continue;
-                // Farklı row'a gitmeyi engelle
-                if (Math.abs(n.cy - fy) > 250) continue;
+		int dx = targetX - fx;
+		int dy = targetY - fy;
 
-                int key;
-                if (Math.abs(dx) > Math.abs(dy)) {
-                    key = dx > 0 ? 22 : 21;
-                } else {
-                    key = dy > 0 ? 20 : 19;
-                }
+		int absDx = Math.abs(dx);
+		int absDy = Math.abs(dy);
 
-                if (key == 22 && dx <= 0) continue;
-                if (key == 21 && dx >= 0) continue;
-                if (key == 20 && dy <= 0) continue;
-                if (key == 19 && dy >= 0) continue;
+		// 🔥 threshold: aynı satır sayılması
+		int rowThreshold = 120;
 
-                double before = Math.hypot(targetX - fx, targetY - fy);
-                double after  = Math.hypot(targetX - n.cx, targetY - n.cy);
-                double improvement = before - after;
-                if (improvement <= 0) continue;
+		// 🎯 1. AYNI YATAY DÜZLEM → SADECE SAĞ/SOL
+		if (absDy < rowThreshold) {
+			if (dx > 0) return 22; // RIGHT
+			else return 21;        // LEFT
+		}
 
-                double score = -improvement;
-                if (score < bestScore) { bestScore = score; bestKey = key; }
-            }
-        }
-        return bestKey;
-    }
+		// 🎯 2. FARKLI DÜZLEM → ÖNCE YUKARI/AŞAĞI
+		if (absDy >= rowThreshold) {
+			if (dy > 0) return 20; // DOWN
+			else return 19;        // UP
+		}
+
+		return -1;
+	}
 
     public void tap() {
         navigating = false;  // önceki navigasyonu iptal et
@@ -308,12 +298,14 @@ public class AirCursorAccessibility extends AccessibilityService {
         int dx = targetX - fx;
         int dy = targetY - fy;
 
-        if (Math.abs(dx) < 60 && Math.abs(dy) < 60) {
-            Log.e(TAG, "✅ Reached → CENTER");
-            navigating = false;
-            injectKey(23);
-            return;
-        }
+        double error = Math.hypot(dx, dy);
+
+		if (error < 80) {
+			Log.e(TAG, "✅ Reached → CENTER");
+			navigating = false;
+			injectKey(23);
+			return;
+		}
 
         int key = chooseBestDirection();
         if (key == -1) {

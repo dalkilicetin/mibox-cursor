@@ -18,6 +18,7 @@ public class AirCursorAccessibility extends AccessibilityService {
     public void onServiceConnected() {
         super.onServiceConnected();
         instance = this;
+
         Log.d("A11Y", "✅ Accessibility connected");
 
         CursorOverlay.init(this);
@@ -29,8 +30,8 @@ public class AirCursorAccessibility extends AccessibilityService {
     @Override
     public void onInterrupt() {}
 
-    // 🔥 TAP
     public void performTap(float x, float y) {
+
         Path path = new Path();
         path.moveTo(x, y);
 
@@ -48,7 +49,7 @@ public class AirCursorAccessibility extends AccessibilityService {
 
             @Override
             public void onCancelled(GestureDescription gestureDescription) {
-                Log.e("A11Y", "❌ Tap cancelled");
+                Log.e("A11Y", "❌ Tap failed");
             }
         }, null);
     }

@@ -7,13 +7,14 @@ import android.view.WindowManager;
 public class CursorOverlay {
 
     private static CursorView cursorView;
-    private static WindowManager windowManager;
+    private static WindowManager wm;
 
     public static float cursorX = 500;
     public static float cursorY = 500;
 
     public static void init(Context context) {
-        windowManager = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
+
+        wm = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
 
         cursorView = new CursorView(context);
 
@@ -21,12 +22,12 @@ public class CursorOverlay {
                 WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                        | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
+                        WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
                 PixelFormat.TRANSLUCENT
         );
 
-        windowManager.addView(cursorView, params);
+        wm.addView(cursorView, params);
     }
 
     public static void move(float dx, float dy) {

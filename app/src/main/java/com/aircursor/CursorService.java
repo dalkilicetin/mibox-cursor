@@ -9,19 +9,22 @@ import org.json.JSONObject;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
-import java.net.ServerSocket;
-import java.net.Socket;
+import java.net.*;
 
 public class CursorService extends Service {
 
     private static final String TAG = "CursorService";
+
     private boolean running = true;
 
     @Override
     public void onCreate() {
         super.onCreate();
-        startServer();
-        Log.d(TAG, "🚀 CursorService started");
+
+        startTcpServer();
+        startUdpDiscovery();
+
+        Log.d(TAG, "🚀 Service started");
     }
 
     @Override
@@ -29,11 +32,12 @@ public class CursorService extends Service {
         return null;
     }
 
-    private void startServer() {
+    // ===================== TCP SERVER =====================
+    private void startTcpServer() {
         new Thread(() -> {
             try {
                 ServerSocket serverSocket = new ServerSocket(9999);
-                Log.d(TAG, "🌐 Server listening on 9999");
+                Log.d(TAG, "🌐 TCP listening 9999");
 
                 while (running) {
                     Socket socket = serverSocket.accept();
@@ -41,7 +45,7 @@ public class CursorService extends Service {
                 }
 
             } catch (Exception e) {
-                Log.e(TAG, "Server error", e);
+                Log.e(TAG, "TCP error", e);
             }
         }).start();
     }
@@ -64,6 +68,59 @@ public class CursorService extends Service {
         }).start();
     }
 
+    // ===================== UDP DISCOVERY =====================
+    private void startUdpDiscovery() {
+        new Thread(() -> {
+            try {
+                DatagramSocket socket = new DatagramSocket(8888, InetAddress.getByName("0.0.0.0"));
+                socket.setBroadcast(true);
+
+                byte[] buffer = new byte[15000];
+
+                Log.d(TAG, "📡 UDP discovery listening 8888");
+
+                while (running) {
+                    DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
+                    socket.receive(packet);
+
+                    String msg = new String(packet.getData(), 0, packet.getLength());
+
+                    if (msg.equals("DISCOVER_AIRCURSOR")) {
+
+                        String response = "AIRCURSOR:" + getLocalIp();
+
+                        DatagramPacket responsePacket = new DatagramPacket(
+                                response.getBytes(),
+                                response.length(),
+                                packet.getAddress(),
+                                packet.getPort()
+                        );
+
+                        socket.send(responsePacket);
+                        Log.d(TAG, "📡 Discovery response sent");
+                    }
+                }
+
+            } catch (Exception e) {
+                Log.e(TAG, "UDP error", e);
+            }
+        }).start();
+    }
+
+    private String getLocalIp() {
+        try {
+            for (NetworkInterface intf : NetworkInterface.getNetworkInterfaces()) {
+                for (InetAddress addr : java.util.Collections.list(intf.getInetAddresses())) {
+                    if (!addr.isLoopbackAddress() && addr instanceof Inet4Address) {
+                        return addr.getHostAddress();
+                    }
+                }
+            }
+        } catch (Exception ignored) {}
+        return "0.0.0.0";
+    }
+
+    // ===================== COMMAND =====================
     private void handleMessage(String message) {
         try {
             JSONObject json = new JSONObject(message);
@@ -83,20 +140,16 @@ public class CursorService extends Service {
                     AirCursorAccessibility svc = AirCursorAccessibility.getInstance();
 
                     if (svc != null) {
-                        float x = CursorOverlay.cursorX;
-                        float y = CursorOverlay.cursorY;
-
-                        svc.performTap(x, y);
-                        Log.d(TAG, "🎯 Tap at: " + x + "," + y);
-
+                        svc.performTap(CursorOverlay.cursorX, CursorOverlay.cursorY);
+                        Log.d(TAG, "🎯 Tap");
                     } else {
-                        Log.e(TAG, "❌ Accessibility service not ready");
+                        Log.e(TAG, "❌ Accessibility not ready");
                     }
                     break;
                 }
 
                 default:
-                    Log.w(TAG, "Unknown command: " + type);
+                    Log.w(TAG, "Unknown: " + type);
             }
 
         } catch (Exception e) {
@@ -108,6 +161,5 @@ public class CursorService extends Service {
     public void onDestroy() {
         super.onDestroy();
         running = false;
-        Log.d(TAG, "🛑 CursorService stopped");
     }
 }

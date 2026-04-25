@@ -53,18 +53,19 @@ public class AirCursorAccessibility extends AccessibilityService {
 
         cursorView = new CursorView(this);
 
+        // MATCH_PARENT: gesture koordinatları screen absolute olmalı
         params = new WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,  // izin gerektirmez
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                 | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
                 | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
         );
 
-        params.x = (int) cursorX;
-        params.y = (int) cursorY;
+        params.x = 0;
+        params.y = 0;
 
         mainHandler.post(() -> {
             wm.addView(cursorView, params);
@@ -73,16 +74,12 @@ public class AirCursorAccessibility extends AccessibilityService {
     }
 
     public void moveCursor(int dx, int dy) {
-        cursorX = Math.max(0, Math.min(cursorX + dx, screenW - 60));
-        cursorY = Math.max(0, Math.min(cursorY + dy, screenH - 60));
-        final int nx = (int) cursorX;
-        final int ny = (int) cursorY;
+        cursorX = Math.max(0, Math.min(cursorX + dx, screenW - 1));
+        cursorY = Math.max(0, Math.min(cursorY + dy, screenH - 1));
+        final float nx = cursorX;
+        final float ny = cursorY;
         mainHandler.post(() -> {
-            if (params != null && wm != null && cursorView != null) {
-                params.x = nx;
-                params.y = ny;
-                wm.updateViewLayout(cursorView, params);
-            }
+            if (cursorView != null) cursorView.updatePosition(nx, ny);
         });
     }
 
@@ -92,24 +89,42 @@ public class AirCursorAccessibility extends AccessibilityService {
         Log.d(TAG, "tap → " + x + "," + y);
         mainHandler.post(() -> {
             if (cursorView != null) cursorView.showClick();
-            performTap(x, y);   // UI thread'den çağır
         });
+        // sh -c input tap: ADB ile aynı yetki seviyesi
+        new Thread(() -> {
+            try {
+                Process p = Runtime.getRuntime().exec(
+                    new String[]{"sh", "-c", "input tap " + x + " " + y}
+                );
+                int exit = p.waitFor();
+                Log.d(TAG, exit == 0 ? "✅ Tap ok (sh): " + x + "," + y
+                                     : "⚠️ Tap sh exit=" + exit + ": " + x + "," + y);
+            } catch (Exception e) {
+                Log.e(TAG, "Tap error: " + e.getMessage());
+                // fallback: dispatchGesture
+                performTap(x, y);
+            }
+        }).start();
     }
 
     public void performTap(int x, int y) {
-        // dispatchGesture UI thread'den çağrılmalı
         mainHandler.post(() -> {
+            float rx = Math.max(1, Math.min(x, screenW - 1));
+            float ry = Math.max(1, Math.min(y, screenH - 1));
+
             Path path = new Path();
-            path.moveTo(x, y);
+            path.moveTo(rx, ry);
+
             GestureDescription gesture = new GestureDescription.Builder()
-                .addStroke(new GestureDescription.StrokeDescription(path, 0, 50))
+                .addStroke(new GestureDescription.StrokeDescription(path, 0, 100))  // 100ms
                 .build();
+
             dispatchGesture(gesture, new GestureResultCallback() {
                 @Override public void onCompleted(GestureDescription g) {
-                    Log.d(TAG, "✅ Tap ok: " + x + "," + y);
+                    Log.d(TAG, "✅ Tap ok: " + rx + "," + ry);
                 }
                 @Override public void onCancelled(GestureDescription g) {
-                    Log.e(TAG, "❌ Tap cancelled: " + x + "," + y);
+                    Log.e(TAG, "❌ Tap cancelled: " + rx + "," + ry);
                 }
             }, null);
         });

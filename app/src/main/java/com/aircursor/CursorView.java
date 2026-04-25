@@ -19,9 +19,14 @@ public class CursorView extends View {
     private Paint edgePaint;
     private Paint arrowPaint;
 
-    // 0=normal, 1=dikey, 2=yatay
-    private int scrollMode = 0;
-    private boolean clicking = false;
+    private float posX = 960;
+    private float posY = 540;
+
+    public void updatePosition(float x, float y) {
+        posX = x;
+        posY = y;
+        invalidate();
+    }
 
     public CursorView(Context context) {
         super(context);
@@ -81,8 +86,8 @@ public class CursorView extends View {
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
 
-        float cx = getWidth() / 2f;
-        float cy = getHeight() / 2f;
+        float cx = posX;
+        float cy = posY;
 
         setupBallGradient(canvas, cx, cy, clicking);
 
@@ -160,7 +165,10 @@ public class CursorView extends View {
 
     @Override
     protected void onMeasure(int w, int h) {
-        int size = (int)(R * 2.2f);
-        setMeasuredDimension(size, size);
+        // MATCH_PARENT overlay — tüm ekranı kapla
+        setMeasuredDimension(
+            MeasureSpec.getSize(w),
+            MeasureSpec.getSize(h)
+        );
     }
 }

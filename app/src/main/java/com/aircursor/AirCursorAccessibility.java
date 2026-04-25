@@ -181,20 +181,72 @@ public class AirCursorAccessibility extends AccessibilityService {
 
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
-        Log.d(TAG, "Event: type=" + event.getEventType() 
-            + " pkg=" + event.getPackageName()
-            + " class=" + event.getClassName());
+        // Event log - ne geliyor görelim
+        Log.d(TAG, "Event type=" + event.getEventType() + " pkg=" + event.getPackageName());
+    }
 
-        if (event.getEventType() == AccessibilityEvent.TYPE_VIEW_FOCUSED) {
-            android.view.accessibility.AccessibilityNodeInfo node = event.getSource();
-            if (node != null) {
-                android.graphics.Rect bounds = new android.graphics.Rect();
-                node.getBoundsInScreen(bounds);
-                Log.d(TAG, "Focus: " + node.getContentDescription()
-                    + " bounds=" + bounds.toString());
-                node.recycle();
+    // Tap gelince anlık UI tree oku - event beklemeden
+    public String dumpNearestNode(int cursorX, int cursorY) {
+        try {
+            android.view.accessibility.AccessibilityNodeInfo root = getRootInActiveWindow();
+            if (root == null) {
+                Log.w(TAG, "getRootInActiveWindow = null");
+                return null;
+            }
+            Log.d(TAG, "Root: " + root.getPackageName() + " children=" + root.getChildCount());
+
+            // En yakın clickable node'u bul
+            NodeResult best = findNearest(root, cursorX, cursorY);
+            root.recycle();
+
+            if (best != null) {
+                Log.d(TAG, "Nearest: " + best.label + " at " + best.cx + "," + best.cy
+                    + " dist=" + best.dist);
+                return "{\"nearest\":\"" + best.label + "\",\"cx\":" + best.cx
+                    + ",\"cy\":" + best.cy + "}";
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "dumpNearestNode error: " + e.getMessage());
+        }
+        return null;
+    }
+
+    private static class NodeResult {
+        String label;
+        int cx, cy;
+        double dist;
+        NodeResult(String label, int cx, int cy, double dist) {
+            this.label = label; this.cx = cx; this.cy = cy; this.dist = dist;
+        }
+    }
+
+    private NodeResult findNearest(android.view.accessibility.AccessibilityNodeInfo node,
+                                   int cursorX, int cursorY) {
+        if (node == null) return null;
+        NodeResult best = null;
+
+        if (node.isClickable() || node.isFocusable()) {
+            android.graphics.Rect r = new android.graphics.Rect();
+            node.getBoundsInScreen(r);
+            if (r.width() > 0 && r.height() > 0) {
+                double dist = Math.hypot(r.centerX() - cursorX, r.centerY() - cursorY);
+                String label = node.getContentDescription() != null
+                    ? node.getContentDescription().toString() : "";
+                if (best == null || dist < best.dist) {
+                    best = new NodeResult(label, r.centerX(), r.centerY(), dist);
+                }
             }
         }
+
+        for (int i = 0; i < node.getChildCount(); i++) {
+            android.view.accessibility.AccessibilityNodeInfo child = node.getChild(i);
+            NodeResult childResult = findNearest(child, cursorX, cursorY);
+            if (child != null) child.recycle();
+            if (childResult != null && (best == null || childResult.dist < best.dist)) {
+                best = childResult;
+            }
+        }
+        return best;
     }
 
     @Override

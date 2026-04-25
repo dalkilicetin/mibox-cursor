@@ -25,14 +25,49 @@ public class CursorService extends Service {
     private static final int TCP_PORT = 9876;
     private static final int UDP_PORT = 9877;
 
+    private static final String TAPSERVER_PATH = "/data/local/tmp/tapserver";
+    private static final int TAPSERVER_PORT = 9877;
     private volatile boolean running = true;
 
     @Override
     public void onCreate() {
         super.onCreate();
+        extractAndStartTapserver();
         startSocketServer();
         startUdpDiscovery();
         Log.i(TAG, "CursorService started on TCP:" + TCP_PORT + " UDP:" + UDP_PORT);
+    }
+
+    private void extractAndStartTapserver() {
+        new Thread(() -> {
+            try {
+                // Assets'ten extract et
+                java.io.File dest = new java.io.File(TAPSERVER_PATH);
+                if (!dest.exists()) {
+                    java.io.InputStream in = getAssets().open("tapserver");
+                    java.io.FileOutputStream out = new java.io.FileOutputStream(dest);
+                    byte[] buf = new byte[4096];
+                    int n;
+                    while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+                    in.close(); out.close();
+                    Log.i(TAG, "tapserver extracted to " + TAPSERVER_PATH);
+                }
+                // Çalıştırma izni ver
+                Runtime.getRuntime().exec(new String[]{"chmod", "+x", TAPSERVER_PATH}).waitFor();
+                // Zaten çalışıyor mu kontrol et
+                Process check = Runtime.getRuntime().exec(new String[]{"sh", "-c", "pgrep -f tapserver"});
+                check.waitFor();
+                if (check.exitValue() != 0) {
+                    // Çalışmıyorsa başlat
+                    Runtime.getRuntime().exec(new String[]{"sh", "-c", TAPSERVER_PATH + " &"});
+                    Log.i(TAG, "tapserver started on port " + TAPSERVER_PORT);
+                } else {
+                    Log.i(TAG, "tapserver already running");
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "tapserver error: " + e.getMessage());
+            }
+        }).start();
     }
 
     private void startUdpDiscovery() {
@@ -125,10 +160,16 @@ public class CursorService extends Service {
 
             } else if (type.equals("tap")) {
                 if (a11y != null) {
+                    int tx = (int) a11y.getCursorX();
+                    int ty = (int) a11y.getCursorY();
+                    // Test: getRootInActiveWindow çalışıyor mu?
+                    String nearest = a11y.dumpNearestNode(tx, ty);
+                    Log.i(TAG, "Tap nearest: " + nearest);
                     a11y.tap();
                     boolean ready = AirCursorAccessibility.getInstance() != null;
-                    writer.println("{\"tap\":true,\"x\":" + (int)a11y.getCursorX() +
-                        ",\"y\":" + (int)a11y.getCursorY() + ",\"a11y\":" + ready + "}");
+                    writer.println("{\"tap\":true,\"x\":" + tx +
+                        ",\"y\":" + ty + ",\"a11y\":" + ready +
+                        (nearest != null ? ",\"nearest\":" + nearest : "") + "}");
                 } else {
                     Log.w(TAG, "tap: accessibility not ready");
                     writer.println("{\"tap\":false,\"a11y\":false}");

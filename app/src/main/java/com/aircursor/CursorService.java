@@ -1,22 +1,9 @@
 package com.aircursor;
 
-import android.app.Instrumentation;
 import android.app.Service;
 import android.content.Intent;
-import android.graphics.PixelFormat;
-import android.os.Build;
-import android.os.Handler;
 import android.os.IBinder;
-import android.os.Looper;
-import android.os.SystemClock;
-import android.util.DisplayMetrics;
 import android.util.Log;
-import android.view.Gravity;
-import android.view.InputDevice;
-import android.view.KeyCharacterMap;
-import android.view.KeyEvent;
-import android.view.MotionEvent;
-import android.view.WindowManager;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -26,111 +13,22 @@ import java.net.Socket;
 
 import org.json.JSONObject;
 
+/**
+ * CursorService: Sadece TCP server + komut yönlendirme.
+ * Overlay ve tap = AirCursorAccessibility üzerinden (SYSTEM_ALERT_WINDOW gerekmez)
+ */
 public class CursorService extends Service {
 
     private static final String TAG = "AirCursor";
     private static final int PORT = 9876;
 
-    private WindowManager wm;
-    private CursorView cursorView;
-    private WindowManager.LayoutParams params;
-    private Handler mainHandler;
-    private int screenW = 1920;
-    private int screenH = 1080;
     private volatile boolean running = true;
-
-    private volatile int realX = 960;
-    private volatile int realY = 540;
 
     @Override
     public void onCreate() {
         super.onCreate();
-        mainHandler = new Handler(Looper.getMainLooper());
-        setupOverlay();
         startSocketServer();
         Log.i(TAG, "CursorService started on port " + PORT);
-    }
-
-    private void setupOverlay() {
-        wm = (WindowManager) getSystemService(WINDOW_SERVICE);
-
-        DisplayMetrics dm = new DisplayMetrics();
-        wm.getDefaultDisplay().getMetrics(dm);
-        screenW = dm.widthPixels;
-        screenH = dm.heightPixels;
-
-        realX = screenW / 2;
-        realY = screenH / 2;
-
-        cursorView = new CursorView(this);
-
-        int type = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
-            ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-            : WindowManager.LayoutParams.TYPE_PHONE;
-
-        params = new WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            type,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-                | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-            PixelFormat.TRANSLUCENT
-        );
-
-        params.gravity = Gravity.TOP | Gravity.LEFT;
-        params.x = realX;
-        params.y = realY;
-
-        wm.addView(cursorView, params);
-        Log.i(TAG, "Overlay added. Screen: " + screenW + "x" + screenH);
-    }
-
-    private void moveCursor(int x, int y) {
-        realX = Math.max(0, Math.min(x, screenW - 60));
-        realY = Math.max(0, Math.min(y, screenH - 60));
-        params.x = realX;
-        params.y = realY;
-        wm.updateViewLayout(cursorView, params);
-    }
-
-    private void injectSwipe(int x1, int y1, int x2, int y2, int durationMs) {
-        new Thread(() -> {
-            try {
-                Runtime.getRuntime().exec(new String[]{
-                    "input", "touchscreen", "swipe",
-                    String.valueOf(x1), String.valueOf(y1),
-                    String.valueOf(x2), String.valueOf(y2),
-                    String.valueOf(durationMs)
-                });
-            } catch (Exception e) {
-                Log.w(TAG, "Swipe error: " + e.getMessage());
-            }
-        }).start();
-    }
-
-    private void injectText(String text) {
-        new Thread(() -> {
-            try {
-                // Bosluk %s olarak gonder
-                String escaped = text.replace(" ", "%s");
-                Runtime.getRuntime().exec(new String[]{"input", "text", escaped});
-            } catch (Exception e) {
-                Log.w(TAG, "Text error: " + e.getMessage());
-            }
-        }).start();
-    }
-
-    private void injectKeyEvent(int keyCode) {
-        new Thread(() -> {
-            try {
-                Runtime.getRuntime().exec(new String[]{
-                    "input", "keyevent", String.valueOf(keyCode)
-                });
-            } catch (Exception e) {
-                Log.w(TAG, "Key error: " + e.getMessage());
-            }
-        }).start();
     }
 
     private void startSocketServer() {
@@ -159,8 +57,14 @@ public class CursorService extends Service {
                     new InputStreamReader(client.getInputStream()));
                 final PrintWriter writer = new PrintWriter(client.getOutputStream(), true);
 
-                writer.println("{\"status\":\"connected\",\"w\":" + screenW +
-                    ",\"h\":" + screenH + ",\"x\":" + realX + ",\"y\":" + realY + "}");
+                AirCursorAccessibility a11y = AirCursorAccessibility.getInstance();
+                int w = a11y != null ? a11y.getScreenW() : 1920;
+                int h = a11y != null ? a11y.getScreenH() : 1080;
+                int x = a11y != null ? (int) a11y.getCursorX() : w / 2;
+                int y = a11y != null ? (int) a11y.getCursorY() : h / 2;
+
+                writer.println("{\"status\":\"connected\",\"w\":" + w +
+                    ",\"h\":" + h + ",\"x\":" + x + ",\"y\":" + y + "}");
 
                 String line;
                 while ((line = reader.readLine()) != null && running) {
@@ -179,106 +83,62 @@ public class CursorService extends Service {
             JSONObject obj = new JSONObject(json);
             String type = obj.getString("type");
 
+            AirCursorAccessibility a11y = AirCursorAccessibility.getInstance();
+
             if (type.equals("move")) {
                 int dx = obj.optInt("dx", 0);
                 int dy = obj.optInt("dy", 0);
-                int nx = Math.max(0, Math.min(realX + dx, screenW - 60));
-                int ny = Math.max(0, Math.min(realY + dy, screenH - 60));
-                mainHandler.post(() -> moveCursor(nx, ny));
-                writer.println("{\"x\":" + nx + ",\"y\":" + ny + "}");
+                if (a11y != null) {
+                    a11y.moveCursor(dx, dy);
+                    writer.println("{\"x\":" + (int)a11y.getCursorX() +
+                        ",\"y\":" + (int)a11y.getCursorY() + "}");
+                }
 
             } else if (type.equals("tap")) {
-                mainHandler.post(() -> cursorView.showClick());
-                final int tapX = realX;
-                final int tapY = realY;
-                new Thread(() -> {
-                    // 1. Accessibility (en iyi yöntem)
-                    AirCursorAccessibility a11y = AirCursorAccessibility.getInstance();
-                    if (a11y != null) {
-                        Log.d(TAG, "tap via accessibility: " + tapX + "," + tapY);
-                        mainHandler.post(() -> a11y.performTap(tapX, tapY));
-                        return;
-                    }
-
-                    // 2. sh -c input tap (bazı cihazlarda plain exec'ten daha iyi)
-                    try {
-                        Process p = Runtime.getRuntime().exec(new String[]{
-                            "sh", "-c", "input tap " + tapX + " " + tapY
-                        });
-                        p.waitFor();
-                        if (p.exitValue() == 0) {
-                            Log.d(TAG, "tap via sh -c: " + tapX + "," + tapY);
-                            return;
-                        }
-                    } catch (Exception e) {
-                        Log.w(TAG, "sh -c tap failed: " + e.getMessage());
-                    }
-
-                    // 3. Instrumentation (system context gerektirir, denemeye değer)
-                    try {
-                        long now = SystemClock.uptimeMillis();
-                        MotionEvent down = MotionEvent.obtain(now, now,
-                            MotionEvent.ACTION_DOWN, tapX, tapY, 0);
-                        down.setSource(InputDevice.SOURCE_TOUCHSCREEN);
-                        MotionEvent up = MotionEvent.obtain(now, now + 50,
-                            MotionEvent.ACTION_UP, tapX, tapY, 0);
-                        up.setSource(InputDevice.SOURCE_TOUCHSCREEN);
-                        new Instrumentation().sendPointerSync(down);
-                        new Instrumentation().sendPointerSync(up);
-                        down.recycle();
-                        up.recycle();
-                        Log.d(TAG, "tap via Instrumentation: " + tapX + "," + tapY);
-                    } catch (Exception e) {
-                        Log.w(TAG, "All tap methods failed: " + e.getMessage());
-                    }
-                }).start();
-                boolean a11yReady = AirCursorAccessibility.getInstance() != null;
-                writer.println("{\"tap\":true,\"x\":" + realX + ",\"y\":" + realY + ",\"a11y\":" + a11yReady + "}");
+                if (a11y != null) {
+                    a11y.tap();
+                    boolean ready = AirCursorAccessibility.getInstance() != null;
+                    writer.println("{\"tap\":true,\"x\":" + (int)a11y.getCursorX() +
+                        ",\"y\":" + (int)a11y.getCursorY() + ",\"a11y\":" + ready + "}");
+                } else {
+                    Log.w(TAG, "tap: accessibility not ready");
+                    writer.println("{\"tap\":false,\"a11y\":false}");
+                }
 
             } else if (type.equals("hide")) {
-                mainHandler.post(() -> cursorView.setVisibility(android.view.View.INVISIBLE));
+                if (a11y != null) a11y.setCursorVisible(false);
                 writer.println("{\"hidden\":true}");
 
             } else if (type.equals("show")) {
-                mainHandler.post(() -> cursorView.setVisibility(android.view.View.VISIBLE));
+                if (a11y != null) a11y.setCursorVisible(true);
                 writer.println("{\"hidden\":false}");
 
             } else if (type.equals("scroll_mode")) {
                 int mode = obj.optInt("mode", 0);
-                mainHandler.post(() -> cursorView.setScrollMode(mode));
+                if (a11y != null) a11y.setScrollMode(mode);
                 writer.println("{\"scroll_mode\":" + mode + "}");
 
             } else if (type.equals("text")) {
-                // Metin gir - PC olmadan klavye
                 String value = obj.optString("value", "");
-                if (!value.isEmpty()) {
-                    injectText(value);
+                if (!value.isEmpty() && a11y != null) {
+                    a11y.injectText(value);
                     writer.println("{\"text\":true}");
                 }
 
             } else if (type.equals("key")) {
-                // Keyevent gonder - back, home, dpad vs
                 int code = obj.optInt("code", 0);
-                if (code > 0) {
-                    injectKeyEvent(code);
+                if (code > 0 && a11y != null) {
+                    a11y.injectKey(code);
                     writer.println("{\"key\":" + code + "}");
                 }
 
             } else if (type.equals("swipe")) {
-                int x1 = obj.optInt("x1", screenW / 2);
-                int y1 = obj.optInt("y1", screenH / 2);
-                int x2 = obj.optInt("x2", screenW / 2);
-                int y2 = obj.optInt("y2", screenH / 2 - 200);
+                int x1 = obj.optInt("x1", 960);
+                int y1 = obj.optInt("y1", 540);
+                int x2 = obj.optInt("x2", 960);
+                int y2 = obj.optInt("y2", 340);
                 int dur = obj.optInt("duration", 150);
-                final int fx1=x1, fy1=y1, fx2=x2, fy2=y2, fdur=dur;
-                mainHandler.post(() -> {
-                    AirCursorAccessibility a11y = AirCursorAccessibility.getInstance();
-                    if (a11y != null) {
-                        a11y.performSwipe(fx1, fy1, fx2, fy2, fdur);
-                    } else {
-                        injectSwipe(fx1, fy1, fx2, fy2, fdur);
-                    }
-                });
+                if (a11y != null) a11y.performSwipe(x1, y1, x2, y2, dur);
                 writer.println("{\"swipe\":true}");
             }
 
@@ -295,9 +155,6 @@ public class CursorService extends Service {
     @Override
     public void onDestroy() {
         running = false;
-        if (cursorView != null && wm != null) {
-            try { wm.removeView(cursorView); } catch (Exception ignored) {}
-        }
         super.onDestroy();
     }
 

@@ -182,11 +182,11 @@ public class AirCursorAccessibility extends AccessibilityService {
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
         if (event.getEventType() == AccessibilityEvent.TYPE_VIEW_FOCUSED) {
-            android.accessibility.AccessibilityNodeInfo node = event.getSource();
+            android.view.accessibility.AccessibilityNodeInfo node = event.getSource();
             if (node != null) {
                 android.graphics.Rect bounds = new android.graphics.Rect();
                 node.getBoundsInScreen(bounds);
-                Log.d(TAG, "Focus: " + node.getContentDescription() 
+                Log.d(TAG, "Focus: " + node.getContentDescription()
                     + " bounds=" + bounds.toString());
                 node.recycle();
             }

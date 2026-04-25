@@ -32,10 +32,13 @@ public class AirCursorAccessibility extends AccessibilityService {
     private int screenW = 1920;
     private int screenH = 1080;
 
-    // Node cache — event'te güncellenir, tap'te sadece lookup
     private final List<NodeInfo> nodeCache = new ArrayList<>();
     private int currentFocusX = -1;
     private int currentFocusY = -1;
+
+    // 🔥 PLAN STATE (ADDED)
+    private final List<Integer> keyPlan = new ArrayList<>();
+    private int planIndex = 0;
 
     static class NodeInfo {
         String label;
@@ -47,10 +50,6 @@ public class AirCursorAccessibility extends AccessibilityService {
     }
 
     public static AirCursorAccessibility getInstance() { return instance; }
-    public float getCursorX() { return cursorX; }
-    public float getCursorY() { return cursorY; }
-    public int getScreenW() { return screenW; }
-    public int getScreenH() { return screenH; }
 
     @Override
     public void onServiceConnected() {
@@ -59,7 +58,6 @@ public class AirCursorAccessibility extends AccessibilityService {
         mainHandler = new Handler(Looper.getMainLooper());
         Log.e(TAG, "✅ Accessibility connected");
         setupOverlay();
-        // İlk yüklemede tree'yi cache'le
         mainHandler.postDelayed(this::refreshNodeCache, 1000);
     }
 
@@ -69,10 +67,9 @@ public class AirCursorAccessibility extends AccessibilityService {
         wm.getDefaultDisplay().getMetrics(dm);
         screenW = dm.widthPixels;
         screenH = dm.heightPixels;
-        cursorX = screenW / 2f;
-        cursorY = screenH / 2f;
 
         cursorView = new CursorView(this);
+
         params = new WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
@@ -82,14 +79,10 @@ public class AirCursorAccessibility extends AccessibilityService {
                 | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
         );
-        params.x = 0; params.y = 0;
-        mainHandler.post(() -> {
-            wm.addView(cursorView, params);
-            Log.e(TAG, "Overlay added: " + screenW + "x" + screenH);
-        });
+
+        mainHandler.post(() -> wm.addView(cursorView, params));
     }
 
-    // Node cache güncelle — background thread'den çağrılabilir
     private void refreshNodeCache() {
         new Thread(() -> {
             try {
@@ -136,10 +129,6 @@ public class AirCursorAccessibility extends AccessibilityService {
         Log.e(TAG, "Event: " + type + " pkg=" + event.getPackageName());
 
         if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            if (navigating) {
-                Log.e(TAG, "Window changed → cancel navigation");
-                navigating = false;
-            }
             mainHandler.postDelayed(this::refreshNodeCache, 200);
         }
 
@@ -154,18 +143,25 @@ public class AirCursorAccessibility extends AccessibilityService {
                 node.getBoundsInScreen(r);
                 currentFocusX = r.centerX();
                 currentFocusY = r.centerY();
-                Log.e(TAG, "Focus at: " + currentFocusX + "," + currentFocusY
-                    + " label=" + node.getContentDescription());
                 node.recycle();
 
                 if (navigating) {
-                    stepNavigate();
+
+                    // 🔥 PLAN EXECUTION (CHANGED)
+                    if (planIndex < keyPlan.size()) {
+                        injectKey(keyPlan.get(planIndex++));
+                    } else {
+                        navigating = false;
+                        injectKey(23);
+                    }
                 }
             }
         }
     }
 
-    // Cursor'a en yakın node'u bul — O(N) ama cache'den, tap anında
+    @Override
+    public void onInterrupt() {}
+
     public NodeInfo findNearest(int cx, int cy) {
         NodeInfo best = null;
         double minDist = Double.MAX_VALUE;
@@ -178,190 +174,84 @@ public class AirCursorAccessibility extends AccessibilityService {
         return best;
     }
 
-    public int getCurrentFocusX() { return currentFocusX; }
-    public int getCurrentFocusY() { return currentFocusY; }
-    public int getNodeCacheSize() { return nodeCache.size(); }
-
-    // Cursor hareketi
-    public void moveCursor(int dx, int dy) {
-        cursorX = Math.max(0, Math.min(cursorX + dx, screenW - 1));
-        cursorY = Math.max(0, Math.min(cursorY + dy, screenH - 1));
-        final float nx = cursorX, ny = cursorY;
-        mainHandler.post(() -> {
-            if (cursorView != null) cursorView.updatePosition(nx, ny);
-        });
-    }
-
-    // Navigation state
     private volatile boolean navigating = false;
     private volatile int targetX = -1;
     private volatile int targetY = -1;
 
-    // Akıllı hedef seçimi — cursor'a yakın ve mevcut focus ile aynı satırda öncelik
-    private NodeInfo pickBestTarget(int cx, int cy) {
-        NodeInfo best = null;
-        double bestScore = Double.MAX_VALUE;
-        int fx = currentFocusX;
-        int fy = currentFocusY;
-
-        synchronized (nodeCache) {
-            for (NodeInfo n : nodeCache) {
-                if (!n.clickable) continue;
-                double dist = Math.hypot(n.cx - cx, n.cy - cy);
-                double rowPenalty = Math.abs(n.cy - fy) * 2.0;
-                double colPenalty = Math.abs(n.cx - fx) * 0.3;
-                double score = dist + rowPenalty + colPenalty;
-                if (score < bestScore) { bestScore = score; best = n; }
-            }
-        }
-        return best;
-    }
-
-    // Hedefe en çok yaklaştıran DPAD yönünü seç
-	private int chooseBestDirection() {
-		int fx = currentFocusX;
-		int fy = currentFocusY;
-
-		int dx = targetX - fx;
-		int dy = targetY - fy;
-
-		int absDx = Math.abs(dx);
-		int absDy = Math.abs(dy);
-
-		// 🔥 threshold: aynı satır sayılması
-		int rowThreshold = 120;
-
-		// 🎯 1. AYNI YATAY DÜZLEM → SADECE SAĞ/SOL
-		if (absDy < rowThreshold) {
-			if (dx > 0) return 22; // RIGHT
-			else return 21;        // LEFT
-		}
-
-		// 🎯 2. FARKLI DÜZLEM → ÖNCE YUKARI/AŞAĞI
-		if (absDy >= rowThreshold) {
-			if (dy > 0) return 20; // DOWN
-			else return 19;        // UP
-		}
-
-		return -1;
-	}
-
     public void tap() {
-        navigating = false;  // önceki navigasyonu iptal et
+
+        navigating = false;
 
         int cx = (int) cursorX;
         int cy = (int) cursorY;
-        NodeInfo target = pickBestTarget(cx, cy);
 
-        mainHandler.post(() -> { if (cursorView != null) cursorView.showClick(); });
+        NodeInfo target = findNearest(cx, cy);
 
         if (target == null) {
-            Log.e(TAG, "Tap → no target → CENTER");
             injectKey(23);
-            return;
-        }
-
-        double dist = Math.hypot(target.cx - cx, target.cy - cy);
-        if (dist > 600) {
-            Log.e(TAG, "Tap → too far → ignore");
             return;
         }
 
         targetX = target.cx;
         targetY = target.cy;
+
+        // 🔥 PLAN START (CHANGED)
+        keyPlan.clear();
+        planIndex = 0;
+        buildPlan();
+
+        if (keyPlan.isEmpty()) {
+            injectKey(23);
+            return;
+        }
+
         navigating = true;
-        Log.e(TAG, "Target: " + target.label + " (" + targetX + "," + targetY + ")");
+        injectKey(keyPlan.get(planIndex++));
 
-        // Timeout — sadece dur, yanlış yere click atma
-        mainHandler.postDelayed(() -> {
-            if (navigating) {
-                Log.e(TAG, "Timeout → cancel");
-                navigating = false;
-            }
-        }, 2000);
-
-        stepNavigate();
+        mainHandler.postDelayed(() -> navigating = false, 2000);
     }
 
-    private void stepNavigate() {
-        if (!navigating) return;
+    // 🔥 PLAN BUILDER (ADDED)
+    private void buildPlan() {
 
         int fx = currentFocusX;
         int fy = currentFocusY;
 
-        if (fx < 0 || fy < 0) {
-            Log.e(TAG, "No focus → cancel");
-            navigating = false;
-            return;
-        }
-
         int dx = targetX - fx;
         int dy = targetY - fy;
 
-        double error = Math.hypot(dx, dy);
+        int step = 120;
 
-		if (error < 80) {
-			Log.e(TAG, "✅ Reached → CENTER");
-			navigating = false;
-			injectKey(23);
-			return;
-		}
-
-        int key = chooseBestDirection();
-        if (key == -1) {
-            Log.e(TAG, "No valid direction → cancel");
-            navigating = false;
-            return;
+        if (Math.abs(dy) > 120) {
+            int count = Math.abs(dy) / step;
+            int key = dy > 0 ? 20 : 19;
+            for (int i = 0; i < count; i++) keyPlan.add(key);
         }
 
-        Log.e(TAG, "stepNavigate focus:(" + fx + "," + fy + ") target:(" + targetX + "," + targetY + ") key=" + key);
-        injectKey(key);
-    }
-
-    public void performSwipe(int x1, int y1, int x2, int y2, int durationMs) {
-        mainHandler.post(() -> {
-            Path path = new Path();
-            path.moveTo(x1, y1); path.lineTo(x2, y2);
-            GestureDescription gesture = new GestureDescription.Builder()
-                .addStroke(new GestureDescription.StrokeDescription(path, 0, durationMs))
-                .build();
-            dispatchGesture(gesture, null, null);
-        });
-    }
-
-    public void setCursorVisible(boolean visible) {
-        mainHandler.post(() -> {
-            if (cursorView != null)
-                cursorView.setVisibility(visible ? View.VISIBLE : View.INVISIBLE);
-        });
-    }
-
-    public void setScrollMode(int mode) {
-        mainHandler.post(() -> { if (cursorView != null) cursorView.setScrollMode(mode); });
-    }
-
-    public void injectText(String text) {
-        new Thread(() -> {
-            try { Runtime.getRuntime().exec(new String[]{"input", "text", text}); }
-            catch (Exception e) { Log.e(TAG, "Text: " + e.getMessage()); }
-        }).start();
+        if (Math.abs(dx) > 80) {
+            int count = Math.abs(dx) / step;
+            int key = dx > 0 ? 22 : 21;
+            for (int i = 0; i < count; i++) keyPlan.add(key);
+        }
     }
 
     public void injectKey(int keyCode) {
         new Thread(() -> {
-            try { Runtime.getRuntime().exec(new String[]{"input", "keyevent", String.valueOf(keyCode)}); }
-            catch (Exception e) { Log.e(TAG, "Key: " + e.getMessage()); }
+            try {
+                Runtime.getRuntime().exec(new String[]{"input", "keyevent", String.valueOf(keyCode)});
+            } catch (Exception e) {
+                Log.e(TAG, "Key error");
+            }
         }).start();
     }
-
-    @Override
-    public void onInterrupt() {}
 
     @Override
     public void onDestroy() {
         instance = null;
         if (cursorView != null && wm != null) {
-            try { mainHandler.post(() -> wm.removeView(cursorView)); } catch (Exception ignored) {}
+            try {
+                mainHandler.post(() -> wm.removeView(cursorView));
+            } catch (Exception ignored) {}
         }
         super.onDestroy();
     }

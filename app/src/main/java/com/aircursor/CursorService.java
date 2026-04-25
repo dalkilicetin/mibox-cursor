@@ -8,19 +8,22 @@ import android.util.Log;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
 import java.net.ServerSocket;
 import java.net.Socket;
 
 import org.json.JSONObject;
 
 /**
- * CursorService: Sadece TCP server + komut yönlendirme.
+ * CursorService: TCP server + UDP discovery + komut yönlendirme.
  * Overlay ve tap = AirCursorAccessibility üzerinden (SYSTEM_ALERT_WINDOW gerekmez)
  */
 public class CursorService extends Service {
 
     private static final String TAG = "AirCursor";
-    private static final int PORT = 9876;
+    private static final int TCP_PORT = 9876;
+    private static final int UDP_PORT = 9877;
 
     private volatile boolean running = true;
 
@@ -28,13 +31,39 @@ public class CursorService extends Service {
     public void onCreate() {
         super.onCreate();
         startSocketServer();
-        Log.i(TAG, "CursorService started on port " + PORT);
+        startUdpDiscovery();
+        Log.i(TAG, "CursorService started on TCP:" + TCP_PORT + " UDP:" + UDP_PORT);
+    }
+
+    private void startUdpDiscovery() {
+        new Thread(() -> {
+            try (DatagramSocket udp = new DatagramSocket(UDP_PORT)) {
+                udp.setBroadcast(true);
+                byte[] buf = new byte[256];
+                Log.i(TAG, "UDP discovery listening on " + UDP_PORT);
+                while (running) {
+                    DatagramPacket pkt = new DatagramPacket(buf, buf.length);
+                    udp.receive(pkt);
+                    String msg = new String(pkt.getData(), 0, pkt.getLength()).trim();
+                    if (msg.equals("AIRCURSOR_DISCOVER")) {
+                        String response = "{\"service\":\"aircursor\",\"port\":" + TCP_PORT + "}";
+                        byte[] resp = response.getBytes();
+                        DatagramPacket reply = new DatagramPacket(
+                            resp, resp.length, pkt.getAddress(), pkt.getPort());
+                        udp.send(reply);
+                        Log.d(TAG, "UDP discovery reply → " + pkt.getAddress());
+                    }
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "UDP error: " + e.getMessage());
+            }
+        }).start();
     }
 
     private void startSocketServer() {
         new Thread(() -> {
-            try (ServerSocket ss = new ServerSocket(PORT)) {
-                Log.i(TAG, "Listening on port " + PORT);
+            try (ServerSocket ss = new ServerSocket(TCP_PORT)) {
+                Log.i(TAG, "Listening on port " + TCP_PORT);
                 while (running) {
                     try {
                         Socket client = ss.accept();

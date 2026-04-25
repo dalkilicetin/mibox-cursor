@@ -135,9 +135,15 @@ public class AirCursorAccessibility extends AccessibilityService {
         int type = event.getEventType();
         Log.e(TAG, "Event: " + type + " pkg=" + event.getPackageName());
 
-        if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
-            type == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
-            // UI değişti — cache'i yenile
+        if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            if (navigating) {
+                Log.e(TAG, "Window changed → cancel navigation");
+                navigating = false;
+            }
+            mainHandler.postDelayed(this::refreshNodeCache, 200);
+        }
+
+        if (type == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
             mainHandler.postDelayed(this::refreshNodeCache, 200);
         }
 
@@ -152,7 +158,6 @@ public class AirCursorAccessibility extends AccessibilityService {
                     + " label=" + node.getContentDescription());
                 node.recycle();
 
-                // Event-driven navigation — yeni focus gelince bir sonraki adımı hesapla
                 if (navigating) {
                     stepNavigate();
                 }
@@ -192,50 +197,102 @@ public class AirCursorAccessibility extends AccessibilityService {
     private volatile int targetX = -1;
     private volatile int targetY = -1;
 
-    // Tap = nearest node'a event-driven navigate et
+    // Akıllı hedef seçimi — cursor'a yakın ve mevcut focus ile aynı satırda öncelik
+    private NodeInfo pickBestTarget(int cx, int cy) {
+        NodeInfo best = null;
+        double bestScore = Double.MAX_VALUE;
+        int fx = currentFocusX;
+        int fy = currentFocusY;
+
+        synchronized (nodeCache) {
+            for (NodeInfo n : nodeCache) {
+                if (!n.clickable) continue;
+                double dist = Math.hypot(n.cx - cx, n.cy - cy);
+                double rowPenalty = Math.abs(n.cy - fy) * 2.0;
+                double colPenalty = Math.abs(n.cx - fx) * 0.3;
+                double score = dist + rowPenalty + colPenalty;
+                if (score < bestScore) { bestScore = score; best = n; }
+            }
+        }
+        return best;
+    }
+
+    // Hedefe en çok yaklaştıran DPAD yönünü seç
+    private int chooseBestDirection() {
+        int fx = currentFocusX;
+        int fy = currentFocusY;
+        double bestScore = Double.MAX_VALUE;
+        int bestKey = -1;
+
+        synchronized (nodeCache) {
+            for (NodeInfo n : nodeCache) {
+                int dx = n.cx - fx;
+                int dy = n.cy - fy;
+                if (Math.abs(dx) < 20 && Math.abs(dy) < 20) continue;
+                // Farklı row'a gitmeyi engelle
+                if (Math.abs(n.cy - fy) > 250) continue;
+
+                int key;
+                if (Math.abs(dx) > Math.abs(dy)) {
+                    key = dx > 0 ? 22 : 21;
+                } else {
+                    key = dy > 0 ? 20 : 19;
+                }
+
+                if (key == 22 && dx <= 0) continue;
+                if (key == 21 && dx >= 0) continue;
+                if (key == 20 && dy <= 0) continue;
+                if (key == 19 && dy >= 0) continue;
+
+                double before = Math.hypot(targetX - fx, targetY - fy);
+                double after  = Math.hypot(targetX - n.cx, targetY - n.cy);
+                double improvement = before - after;
+                if (improvement <= 0) continue;
+
+                double score = -improvement;
+                if (score < bestScore) { bestScore = score; bestKey = key; }
+            }
+        }
+        return bestKey;
+    }
+
     public void tap() {
-        if (navigating) return;  // navigation lock
+        navigating = false;  // önceki navigasyonu iptal et
 
         int cx = (int) cursorX;
         int cy = (int) cursorY;
-        NodeInfo nearest = findNearest(cx, cy);
+        NodeInfo target = pickBestTarget(cx, cy);
 
-        mainHandler.post(() -> {
-            if (cursorView != null) cursorView.showClick();
-        });
+        mainHandler.post(() -> { if (cursorView != null) cursorView.showClick(); });
 
-        if (nearest == null) {
-            Log.e(TAG, "Tap → no node → CENTER");
+        if (target == null) {
+            Log.e(TAG, "Tap → no target → CENTER");
             injectKey(23);
             return;
         }
 
-        // Çok uzak node'u ignore et
-        double dist = Math.hypot(nearest.cx - cx, nearest.cy - cy);
+        double dist = Math.hypot(target.cx - cx, target.cy - cy);
         if (dist > 600) {
-            Log.e(TAG, "Tap → too far (" + (int)dist + "px) → CENTER");
-            injectKey(23);
+            Log.e(TAG, "Tap → too far → ignore");
             return;
         }
 
-        targetX = nearest.cx;
-        targetY = nearest.cy;
+        targetX = target.cx;
+        targetY = target.cy;
         navigating = true;
-        Log.e(TAG, "Tap → navigate to: " + nearest.label + " (" + targetX + "," + targetY + ")");
+        Log.e(TAG, "Target: " + target.label + " (" + targetX + "," + targetY + ")");
 
-        // Timeout — 2sn içinde ulaşamazsa iptal
+        // Timeout — sadece dur, yanlış yere click atma
         mainHandler.postDelayed(() -> {
             if (navigating) {
-                Log.e(TAG, "Navigation timeout");
+                Log.e(TAG, "Timeout → cancel");
                 navigating = false;
-                injectKey(23);
             }
         }, 2000);
 
         stepNavigate();
     }
 
-    // Event-driven navigation step
     private void stepNavigate() {
         if (!navigating) return;
 
@@ -243,35 +300,30 @@ public class AirCursorAccessibility extends AccessibilityService {
         int fy = currentFocusY;
 
         if (fx < 0 || fy < 0) {
-            Log.e(TAG, "stepNavigate → no focus → CENTER");
+            Log.e(TAG, "No focus → cancel");
             navigating = false;
-            injectKey(23);
             return;
         }
 
         int dx = targetX - fx;
         int dy = targetY - fy;
 
-        Log.e(TAG, "stepNavigate → focus:(" + fx + "," + fy +
-            ") target:(" + targetX + "," + targetY + ") d:(" + dx + "," + dy + ")");
-
-        // Hedefe ulaştık mı?
-        if (Math.abs(dx) < 80 && Math.abs(dy) < 80) {
+        if (Math.abs(dx) < 60 && Math.abs(dy) < 60) {
             Log.e(TAG, "✅ Reached → CENTER");
             navigating = false;
             injectKey(23);
             return;
         }
 
-        // Hangi yönde DPAD
-        int keyCode;
-        if (Math.abs(dx) > Math.abs(dy)) {
-            keyCode = dx > 0 ? 22 : 21;  // RIGHT : LEFT
-        } else {
-            keyCode = dy > 0 ? 20 : 19;  // DOWN : UP
+        int key = chooseBestDirection();
+        if (key == -1) {
+            Log.e(TAG, "No valid direction → cancel");
+            navigating = false;
+            return;
         }
-        injectKey(keyCode);
-        // Bir sonraki adım TYPE_VIEW_FOCUSED event'i tetikleyince gelecek
+
+        Log.e(TAG, "stepNavigate focus:(" + fx + "," + fy + ") target:(" + targetX + "," + targetY + ") key=" + key);
+        injectKey(key);
     }
 
     public void performSwipe(int x1, int y1, int x2, int y2, int durationMs) {

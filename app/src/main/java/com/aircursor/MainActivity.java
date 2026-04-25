@@ -20,7 +20,7 @@ public class MainActivity extends Activity {
         Log.e("AIRCURSOR", "=== MAINACTIVITY STARTED ===");
 
         TextView tv = new TextView(this);
-        tv.setText("AIRCURSOR CALISIYOR\nPort: 9876");
+        tv.setText("AIRCURSOR CALISIYOR\nPort: 9999");
         tv.setTextColor(Color.WHITE);
         tv.setTextSize(24);
         tv.setBackgroundColor(Color.BLACK);
@@ -60,7 +60,7 @@ public class MainActivity extends Activity {
             Log.e("AIRCURSOR", "=== SERVICE STARTED ===");
 
             TextView tv = new TextView(this);
-            tv.setText("AIRCURSOR HAZIR\nPort: 9876\n\nBaglanti bekleniyor...");
+            tv.setText("AIRCURSOR HAZIR\nPort: 9999\n\nBaglanti bekleniyor...");
             tv.setTextColor(Color.GREEN);
             tv.setTextSize(20);
             tv.setBackgroundColor(Color.BLACK);

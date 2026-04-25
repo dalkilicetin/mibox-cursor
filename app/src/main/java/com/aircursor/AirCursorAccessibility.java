@@ -4,12 +4,18 @@ import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.GestureDescription;
 import android.graphics.Path;
 import android.graphics.PixelFormat;
+import android.graphics.Rect;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.DisplayMetrics;
 import android.util.Log;
+import android.view.View;
 import android.view.WindowManager;
 import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
+
+import java.util.ArrayList;
+import java.util.List;
 
 public class AirCursorAccessibility extends AccessibilityService {
 
@@ -26,6 +32,20 @@ public class AirCursorAccessibility extends AccessibilityService {
     private int screenW = 1920;
     private int screenH = 1080;
 
+    // Node cache — event'te güncellenir, tap'te sadece lookup
+    private final List<NodeInfo> nodeCache = new ArrayList<>();
+    private int currentFocusX = -1;
+    private int currentFocusY = -1;
+
+    static class NodeInfo {
+        String label;
+        int cx, cy;
+        boolean clickable;
+        NodeInfo(String label, int cx, int cy, boolean clickable) {
+            this.label = label; this.cx = cx; this.cy = cy; this.clickable = clickable;
+        }
+    }
+
     public static AirCursorAccessibility getInstance() { return instance; }
     public float getCursorX() { return cursorX; }
     public float getCursorY() { return cursorY; }
@@ -39,11 +59,12 @@ public class AirCursorAccessibility extends AccessibilityService {
         mainHandler = new Handler(Looper.getMainLooper());
         Log.i(TAG, "✅ Accessibility connected");
         setupOverlay();
+        // İlk yüklemede tree'yi cache'le
+        mainHandler.postDelayed(this::refreshNodeCache, 1000);
     }
 
     private void setupOverlay() {
         wm = (WindowManager) getSystemService(WINDOW_SERVICE);
-
         DisplayMetrics dm = new DisplayMetrics();
         wm.getDefaultDisplay().getMetrics(dm);
         screenW = dm.widthPixels;
@@ -52,8 +73,6 @@ public class AirCursorAccessibility extends AccessibilityService {
         cursorY = screenH / 2f;
 
         cursorView = new CursorView(this);
-
-        // MATCH_PARENT: gesture koordinatları screen absolute olmalı
         params = new WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
@@ -63,78 +82,162 @@ public class AirCursorAccessibility extends AccessibilityService {
                 | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
         );
-
-        params.x = 0;
-        params.y = 0;
-
+        params.x = 0; params.y = 0;
         mainHandler.post(() -> {
             wm.addView(cursorView, params);
             Log.i(TAG, "Overlay added: " + screenW + "x" + screenH);
         });
     }
 
+    // Node cache güncelle — background thread'den çağrılabilir
+    private void refreshNodeCache() {
+        new Thread(() -> {
+            try {
+                AccessibilityNodeInfo root = getRootInActiveWindow();
+                if (root == null) { Log.w(TAG, "root=null"); return; }
+                List<NodeInfo> nodes = new ArrayList<>();
+                traverseNodes(root, nodes);
+                root.recycle();
+                synchronized (nodeCache) {
+                    nodeCache.clear();
+                    nodeCache.addAll(nodes);
+                }
+                Log.d(TAG, "Cache updated: " + nodes.size() + " nodes");
+            } catch (Exception e) {
+                Log.e(TAG, "refreshNodeCache: " + e.getMessage());
+            }
+        }).start();
+    }
+
+    private void traverseNodes(AccessibilityNodeInfo node, List<NodeInfo> out) {
+        if (node == null) return;
+        if (node.isClickable() || node.isFocusable()) {
+            Rect r = new Rect();
+            node.getBoundsInScreen(r);
+            if (r.width() > 0 && r.height() > 0) {
+                String label = "";
+                if (node.getContentDescription() != null)
+                    label = node.getContentDescription().toString();
+                else if (node.getText() != null)
+                    label = node.getText().toString();
+                out.add(new NodeInfo(label, r.centerX(), r.centerY(), node.isClickable()));
+            }
+        }
+        for (int i = 0; i < node.getChildCount(); i++) {
+            AccessibilityNodeInfo child = node.getChild(i);
+            traverseNodes(child, out);
+            if (child != null) child.recycle();
+        }
+    }
+
+    @Override
+    public void onAccessibilityEvent(AccessibilityEvent event) {
+        int type = event.getEventType();
+        Log.d(TAG, "Event: " + type + " pkg=" + event.getPackageName());
+
+        if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+            type == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
+            // UI değişti — cache'i yenile
+            mainHandler.postDelayed(this::refreshNodeCache, 200);
+        }
+
+        if (type == AccessibilityEvent.TYPE_VIEW_FOCUSED) {
+            AccessibilityNodeInfo node = event.getSource();
+            if (node != null) {
+                Rect r = new Rect();
+                node.getBoundsInScreen(r);
+                currentFocusX = r.centerX();
+                currentFocusY = r.centerY();
+                Log.d(TAG, "Focus at: " + currentFocusX + "," + currentFocusY
+                    + " label=" + node.getContentDescription());
+                node.recycle();
+            }
+        }
+    }
+
+    // Cursor'a en yakın node'u bul — O(N) ama cache'den, tap anında
+    public NodeInfo findNearest(int cx, int cy) {
+        NodeInfo best = null;
+        double minDist = Double.MAX_VALUE;
+        synchronized (nodeCache) {
+            for (NodeInfo n : nodeCache) {
+                double d = Math.hypot(n.cx - cx, n.cy - cy);
+                if (d < minDist) { minDist = d; best = n; }
+            }
+        }
+        return best;
+    }
+
+    public int getCurrentFocusX() { return currentFocusX; }
+    public int getCurrentFocusY() { return currentFocusY; }
+    public int getNodeCacheSize() { return nodeCache.size(); }
+
+    // Cursor hareketi
     public void moveCursor(int dx, int dy) {
         cursorX = Math.max(0, Math.min(cursorX + dx, screenW - 1));
         cursorY = Math.max(0, Math.min(cursorY + dy, screenH - 1));
-        final float nx = cursorX;
-        final float ny = cursorY;
+        final float nx = cursorX, ny = cursorY;
         mainHandler.post(() -> {
             if (cursorView != null) cursorView.updatePosition(nx, ny);
         });
     }
 
+    // Tap = cursor'a en yakın node'a DPAD ile git + CENTER
     public void tap() {
-        final int x = (int) cursorX;
-        final int y = (int) cursorY;
-        Log.d(TAG, "tap → " + x + "," + y);
-        mainHandler.post(() -> {
-            if (cursorView != null) cursorView.showClick();
-        });
-        // sh -c input tap: ADB ile aynı yetki seviyesi
-        new Thread(() -> {
-            try {
-                Process p = Runtime.getRuntime().exec(
-                    new String[]{"sh", "-c", "input tap " + x + " " + y}
-                );
-                int exit = p.waitFor();
-                Log.d(TAG, exit == 0 ? "✅ Tap ok (sh): " + x + "," + y
-                                     : "⚠️ Tap sh exit=" + exit + ": " + x + "," + y);
-            } catch (Exception e) {
-                Log.e(TAG, "Tap error: " + e.getMessage());
-                // fallback: dispatchGesture
-                performTap(x, y);
-            }
-        }).start();
+        int tx = (int) cursorX;
+        int ty = (int) cursorY;
+        NodeInfo nearest = findNearest(tx, ty);
+        if (nearest != null) {
+            Log.d(TAG, "Tap → nearest: " + nearest.label + " at " + nearest.cx + "," + nearest.cy);
+            mainHandler.post(() -> {
+                if (cursorView != null) cursorView.showClick();
+            });
+            // Cache'de node yoksa veya çok uzaksa direkt CENTER
+            navigateTo(nearest.cx, nearest.cy);
+        } else {
+            Log.w(TAG, "Tap → no nearest node, sending CENTER");
+            injectKey(23); // DPAD_CENTER
+        }
     }
 
-    public void performTap(int x, int y) {
-        mainHandler.post(() -> {
-            float rx = Math.max(1, Math.min(x, screenW - 1));
-            float ry = Math.max(1, Math.min(y, screenH - 1));
+    // Greedy DPAD navigation — hedef koordinata ulaşana kadar
+    private void navigateTo(int targetX, int targetY) {
+        new Thread(() -> {
+            for (int attempt = 0; attempt < 10; attempt++) {
+                int fx = currentFocusX;
+                int fy = currentFocusY;
 
-            Path path = new Path();
-            path.moveTo(rx, ry);
-
-            GestureDescription gesture = new GestureDescription.Builder()
-                .addStroke(new GestureDescription.StrokeDescription(path, 0, 100))  // 100ms
-                .build();
-
-            dispatchGesture(gesture, new GestureResultCallback() {
-                @Override public void onCompleted(GestureDescription g) {
-                    Log.d(TAG, "✅ Tap ok: " + rx + "," + ry);
+                if (fx < 0 || fy < 0) {
+                    // Focus bilgisi yok — direkt CENTER
+                    break;
                 }
-                @Override public void onCancelled(GestureDescription g) {
-                    Log.e(TAG, "❌ Tap cancelled: " + rx + "," + ry);
+
+                int dx = targetX - fx;
+                int dy = targetY - fy;
+
+                // Hedefe yaklaştık mı?
+                if (Math.abs(dx) < 100 && Math.abs(dy) < 100) break;
+
+                // Hangi yönde daha fazla hareket gerekiyor?
+                int keyCode;
+                if (Math.abs(dx) > Math.abs(dy)) {
+                    keyCode = dx > 0 ? 22 : 21; // RIGHT : LEFT
+                } else {
+                    keyCode = dy > 0 ? 20 : 19; // DOWN : UP
                 }
-            }, null);
-        });
+
+                injectKey(keyCode);
+                try { Thread.sleep(150); } catch (Exception ignored) {}
+            }
+            // Hedefe geldik — tıkla
+            injectKey(23); // DPAD_CENTER
+        }).start();
     }
 
     public void performSwipe(int x1, int y1, int x2, int y2, int durationMs) {
         mainHandler.post(() -> {
             Path path = new Path();
-            path.moveTo(x1, y1);
-            path.lineTo(x2, y2);
+            path.moveTo(x1, y1); path.lineTo(x2, y2);
             GestureDescription gesture = new GestureDescription.Builder()
                 .addStroke(new GestureDescription.StrokeDescription(path, 0, durationMs))
                 .build();
@@ -145,109 +248,30 @@ public class AirCursorAccessibility extends AccessibilityService {
     public void setCursorVisible(boolean visible) {
         mainHandler.post(() -> {
             if (cursorView != null)
-                cursorView.setVisibility(visible ? android.view.View.VISIBLE : android.view.View.INVISIBLE);
+                cursorView.setVisibility(visible ? View.VISIBLE : View.INVISIBLE);
         });
     }
 
     public void setScrollMode(int mode) {
-        mainHandler.post(() -> {
-            if (cursorView != null) cursorView.setScrollMode(mode);
-        });
+        mainHandler.post(() -> { if (cursorView != null) cursorView.setScrollMode(mode); });
     }
 
     public void injectText(String text) {
         new Thread(() -> {
-            try {
-                String escaped = text.replace(" ", "%s");
-                Runtime.getRuntime().exec(new String[]{"input", "text", escaped});
-            } catch (Exception e) {
-                Log.w(TAG, "Text error: " + e.getMessage());
-            }
+            try { Runtime.getRuntime().exec(new String[]{"input", "text", text}); }
+            catch (Exception e) { Log.w(TAG, "Text: " + e.getMessage()); }
         }).start();
     }
 
     public void injectKey(int keyCode) {
         new Thread(() -> {
-            try {
-                Runtime.getRuntime().exec(new String[]{"input", "keyevent", String.valueOf(keyCode)});
-            } catch (Exception e) {
-                Log.w(TAG, "Key error: " + e.getMessage());
-            }
+            try { Runtime.getRuntime().exec(new String[]{"input", "keyevent", String.valueOf(keyCode)}); }
+            catch (Exception e) { Log.w(TAG, "Key: " + e.getMessage()); }
         }).start();
     }
 
     @Override
     public void onInterrupt() {}
-
-    @Override
-    public void onAccessibilityEvent(AccessibilityEvent event) {
-        // Event log - ne geliyor görelim
-        Log.d(TAG, "Event type=" + event.getEventType() + " pkg=" + event.getPackageName());
-    }
-
-    // Tap gelince anlık UI tree oku - event beklemeden
-    public String dumpNearestNode(int cursorX, int cursorY) {
-        try {
-            android.view.accessibility.AccessibilityNodeInfo root = getRootInActiveWindow();
-            if (root == null) {
-                Log.w(TAG, "getRootInActiveWindow = null");
-                return null;
-            }
-            Log.d(TAG, "Root: " + root.getPackageName() + " children=" + root.getChildCount());
-
-            // En yakın clickable node'u bul
-            NodeResult best = findNearest(root, cursorX, cursorY);
-            root.recycle();
-
-            if (best != null) {
-                Log.d(TAG, "Nearest: " + best.label + " at " + best.cx + "," + best.cy
-                    + " dist=" + best.dist);
-                return "{\"nearest\":\"" + best.label + "\",\"cx\":" + best.cx
-                    + ",\"cy\":" + best.cy + "}";
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "dumpNearestNode error: " + e.getMessage());
-        }
-        return null;
-    }
-
-    private static class NodeResult {
-        String label;
-        int cx, cy;
-        double dist;
-        NodeResult(String label, int cx, int cy, double dist) {
-            this.label = label; this.cx = cx; this.cy = cy; this.dist = dist;
-        }
-    }
-
-    private NodeResult findNearest(android.view.accessibility.AccessibilityNodeInfo node,
-                                   int cursorX, int cursorY) {
-        if (node == null) return null;
-        NodeResult best = null;
-
-        if (node.isClickable() || node.isFocusable()) {
-            android.graphics.Rect r = new android.graphics.Rect();
-            node.getBoundsInScreen(r);
-            if (r.width() > 0 && r.height() > 0) {
-                double dist = Math.hypot(r.centerX() - cursorX, r.centerY() - cursorY);
-                String label = node.getContentDescription() != null
-                    ? node.getContentDescription().toString() : "";
-                if (best == null || dist < best.dist) {
-                    best = new NodeResult(label, r.centerX(), r.centerY(), dist);
-                }
-            }
-        }
-
-        for (int i = 0; i < node.getChildCount(); i++) {
-            android.view.accessibility.AccessibilityNodeInfo child = node.getChild(i);
-            NodeResult childResult = findNearest(child, cursorX, cursorY);
-            if (child != null) child.recycle();
-            if (childResult != null && (best == null || childResult.dist < best.dist)) {
-                best = childResult;
-            }
-        }
-        return best;
-    }
 
     @Override
     public void onDestroy() {

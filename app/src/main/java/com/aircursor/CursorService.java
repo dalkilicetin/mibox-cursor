@@ -160,18 +160,10 @@ public class CursorService extends Service {
 
             } else if (type.equals("tap")) {
                 if (a11y != null) {
-                    int tx = (int) a11y.getCursorX();
-                    int ty = (int) a11y.getCursorY();
-                    // Test: getRootInActiveWindow çalışıyor mu?
-                    String nearest = a11y.dumpNearestNode(tx, ty);
-                    Log.i(TAG, "Tap nearest: " + nearest);
                     a11y.tap();
-                    boolean ready = AirCursorAccessibility.getInstance() != null;
-                    writer.println("{\"tap\":true,\"x\":" + tx +
-                        ",\"y\":" + ty + ",\"a11y\":" + ready +
-                        (nearest != null ? ",\"nearest\":" + nearest : "") + "}");
+                    int cacheSize = a11y.getNodeCacheSize();
+                    writer.println("{\"tap\":true,\"nodes\":" + cacheSize + "}");
                 } else {
-                    Log.w(TAG, "tap: accessibility not ready");
                     writer.println("{\"tap\":false,\"a11y\":false}");
                 }
 

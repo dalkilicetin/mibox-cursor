@@ -92,34 +92,39 @@ public class AirCursorAccessibility extends AccessibilityService {
         Log.d(TAG, "tap → " + x + "," + y);
         mainHandler.post(() -> {
             if (cursorView != null) cursorView.showClick();
+            performTap(x, y);   // UI thread'den çağır
         });
-        performTap(x, y);
     }
 
     public void performTap(int x, int y) {
-        Path path = new Path();
-        path.moveTo(x, y);
-        GestureDescription gesture = new GestureDescription.Builder()
-            .addStroke(new GestureDescription.StrokeDescription(path, 0, 50))
-            .build();
-        dispatchGesture(gesture, new GestureResultCallback() {
-            @Override public void onCompleted(GestureDescription g) {
-                Log.d(TAG, "✅ Tap ok: " + x + "," + y);
-            }
-            @Override public void onCancelled(GestureDescription g) {
-                Log.e(TAG, "❌ Tap cancelled: " + x + "," + y);
-            }
-        }, null);
+        // dispatchGesture UI thread'den çağrılmalı
+        mainHandler.post(() -> {
+            Path path = new Path();
+            path.moveTo(x, y);
+            GestureDescription gesture = new GestureDescription.Builder()
+                .addStroke(new GestureDescription.StrokeDescription(path, 0, 50))
+                .build();
+            dispatchGesture(gesture, new GestureResultCallback() {
+                @Override public void onCompleted(GestureDescription g) {
+                    Log.d(TAG, "✅ Tap ok: " + x + "," + y);
+                }
+                @Override public void onCancelled(GestureDescription g) {
+                    Log.e(TAG, "❌ Tap cancelled: " + x + "," + y);
+                }
+            }, null);
+        });
     }
 
     public void performSwipe(int x1, int y1, int x2, int y2, int durationMs) {
-        Path path = new Path();
-        path.moveTo(x1, y1);
-        path.lineTo(x2, y2);
-        GestureDescription gesture = new GestureDescription.Builder()
-            .addStroke(new GestureDescription.StrokeDescription(path, 0, durationMs))
-            .build();
-        dispatchGesture(gesture, null, null);
+        mainHandler.post(() -> {
+            Path path = new Path();
+            path.moveTo(x1, y1);
+            path.lineTo(x2, y2);
+            GestureDescription gesture = new GestureDescription.Builder()
+                .addStroke(new GestureDescription.StrokeDescription(path, 0, durationMs))
+                .build();
+            dispatchGesture(gesture, null, null);
+        });
     }
 
     public void setCursorVisible(boolean visible) {

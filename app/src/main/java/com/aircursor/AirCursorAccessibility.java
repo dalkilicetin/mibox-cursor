@@ -20,7 +20,18 @@ public class AirCursorAccessibility extends AccessibilityService {
     public void onServiceConnected() {
         super.onServiceConnected();
         instance = this;
-        Log.i(TAG, "Accessibility Service connected");
+        Log.i(TAG, "✅ Accessibility Service connected — tap injection ready");
+
+        // Android TV'de bazen ServiceInfo güncellenmesi gerekiyor
+        try {
+            android.accessibilityservice.AccessibilityServiceInfo info = getServiceInfo();
+            if (info != null) {
+                info.flags |= android.accessibilityservice.AccessibilityServiceInfo.FLAG_REQUEST_TOUCH_EXPLORATION_MODE;
+                setServiceInfo(info);
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "ServiceInfo update failed: " + e.getMessage());
+        }
     }
 
     @Override

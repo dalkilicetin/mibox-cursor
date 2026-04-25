@@ -192,20 +192,44 @@ public class CursorService extends Service {
                 final int tapX = realX;
                 final int tapY = realY;
                 new Thread(() -> {
+                    // 1. Accessibility (en iyi yöntem)
                     AirCursorAccessibility a11y = AirCursorAccessibility.getInstance();
                     if (a11y != null) {
                         Log.d(TAG, "tap via accessibility: " + tapX + "," + tapY);
                         mainHandler.post(() -> a11y.performTap(tapX, tapY));
-                    } else {
-                        Log.d(TAG, "tap fallback used: " + tapX + "," + tapY);
-                        try {
-                            Runtime.getRuntime().exec(new String[]{
-                                "input", "tap",
-                                String.valueOf(tapX), String.valueOf(tapY)
-                            });
-                        } catch (Exception e) {
-                            Log.w(TAG, "Tap fallback error: " + e.getMessage());
+                        return;
+                    }
+
+                    // 2. sh -c input tap (bazı cihazlarda plain exec'ten daha iyi)
+                    try {
+                        Process p = Runtime.getRuntime().exec(new String[]{
+                            "sh", "-c", "input tap " + tapX + " " + tapY
+                        });
+                        p.waitFor();
+                        if (p.exitValue() == 0) {
+                            Log.d(TAG, "tap via sh -c: " + tapX + "," + tapY);
+                            return;
                         }
+                    } catch (Exception e) {
+                        Log.w(TAG, "sh -c tap failed: " + e.getMessage());
+                    }
+
+                    // 3. Instrumentation (system context gerektirir, denemeye değer)
+                    try {
+                        long now = SystemClock.uptimeMillis();
+                        MotionEvent down = MotionEvent.obtain(now, now,
+                            MotionEvent.ACTION_DOWN, tapX, tapY, 0);
+                        down.setSource(InputDevice.SOURCE_TOUCHSCREEN);
+                        MotionEvent up = MotionEvent.obtain(now, now + 50,
+                            MotionEvent.ACTION_UP, tapX, tapY, 0);
+                        up.setSource(InputDevice.SOURCE_TOUCHSCREEN);
+                        new Instrumentation().sendPointerSync(down);
+                        new Instrumentation().sendPointerSync(up);
+                        down.recycle();
+                        up.recycle();
+                        Log.d(TAG, "tap via Instrumentation: " + tapX + "," + tapY);
+                    } catch (Exception e) {
+                        Log.w(TAG, "All tap methods failed: " + e.getMessage());
                     }
                 }).start();
                 boolean a11yReady = AirCursorAccessibility.getInstance() != null;

@@ -36,6 +36,9 @@ public class AirCursorAccessibility extends AccessibilityService {
     private final List<NodeInfo> nodeCache = new ArrayList<>();
     private int currentFocusX = -1;
     private int currentFocusY = -1;
+	// 🔥 ADD
+	private final List<Integer> keyPlan = new ArrayList<>();
+	private int planIndex = 0;
 
     static class NodeInfo {
         String label;
@@ -158,9 +161,15 @@ public class AirCursorAccessibility extends AccessibilityService {
                     + " label=" + node.getContentDescription());
                 node.recycle();
 
-                if (navigating) {
-                    stepNavigate();
-                }
+				if (navigating) {
+
+					if (planIndex < keyPlan.size()) {
+						injectKey(keyPlan.get(planIndex++));
+					} else {
+						navigating = false;
+						injectKey(23);
+					}
+				}
             }
         }
     }
@@ -269,16 +278,28 @@ public class AirCursorAccessibility extends AccessibilityService {
 
         targetX = target.cx;
         targetY = target.cy;
-        navigating = true;
-        Log.e(TAG, "Target: " + target.label + " (" + targetX + "," + targetY + ")");
+		navigating = true;
+		Log.e(TAG, "Target: " + target.label + " (" + targetX + "," + targetY + ")");
 
-        // Timeout — sadece dur, yanlış yere click atma
-        mainHandler.postDelayed(() -> {
-            if (navigating) {
-                Log.e(TAG, "Timeout → cancel");
-                navigating = false;
-            }
-        }, 2000);
+		// 🔥 PLAN BAŞLAT
+		keyPlan.clear();
+		planIndex = 0;
+		buildPlan();
+
+		if (keyPlan.isEmpty()) {
+			injectKey(23);
+			return;
+		}
+
+		injectKey(keyPlan.get(planIndex++));
+
+		// Timeout aynı kalıyor
+		mainHandler.postDelayed(() -> {
+			if (navigating) {
+				Log.e(TAG, "Timeout → cancel");
+				navigating = false;
+			}
+		}, 2000);
 
         stepNavigate();
     }
@@ -354,6 +375,40 @@ public class AirCursorAccessibility extends AccessibilityService {
         }).start();
     }
 
+		// 🔥 ADD
+	private void buildPlan() {
+
+		int fx = currentFocusX;
+		int fy = currentFocusY;
+
+		int dx = targetX - fx;
+		int dy = targetY - fy;
+
+		int step = 120;
+
+		// önce dikey hizala
+		if (Math.abs(dy) > 120) {
+			int count = Math.abs(dy) / step;
+			int key = dy > 0 ? 20 : 19;
+
+			for (int i = 0; i < count; i++) {
+				keyPlan.add(key);
+			}
+		}
+
+		// sonra yatay git
+		if (Math.abs(dx) > 80) {
+			int count = Math.abs(dx) / step;
+			int key = dx > 0 ? 22 : 21;
+
+			for (int i = 0; i < count; i++) {
+				keyPlan.add(key);
+			}
+		}
+
+		Log.e(TAG, "Plan size: " + keyPlan.size());
+	}
+	
     @Override
     public void onInterrupt() {}
 
@@ -366,3 +421,4 @@ public class AirCursorAccessibility extends AccessibilityService {
         super.onDestroy();
     }
 }
+

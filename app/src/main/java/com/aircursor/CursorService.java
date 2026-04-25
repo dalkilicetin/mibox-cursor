@@ -194,21 +194,22 @@ public class CursorService extends Service {
                 new Thread(() -> {
                     AirCursorAccessibility a11y = AirCursorAccessibility.getInstance();
                     if (a11y != null) {
+                        Log.d(TAG, "tap via accessibility: " + tapX + "," + tapY);
                         mainHandler.post(() -> a11y.performTap(tapX, tapY));
                     } else {
-                        // Fallback: accessibility bağlı değilse Runtime.exec ile tap
+                        Log.d(TAG, "tap fallback used: " + tapX + "," + tapY);
                         try {
                             Runtime.getRuntime().exec(new String[]{
                                 "input", "tap",
                                 String.valueOf(tapX), String.valueOf(tapY)
                             });
-                            Log.i(TAG, "Tap (fallback): " + tapX + "," + tapY);
                         } catch (Exception e) {
                             Log.w(TAG, "Tap fallback error: " + e.getMessage());
                         }
                     }
                 }).start();
-                writer.println("{\"tap\":true,\"x\":" + realX + ",\"y\":" + realY + "}");
+                boolean a11yReady = AirCursorAccessibility.getInstance() != null;
+                writer.println("{\"tap\":true,\"x\":" + realX + ",\"y\":" + realY + ",\"a11y\":" + a11yReady + "}");
 
             } else if (type.equals("hide")) {
                 mainHandler.post(() -> cursorView.setVisibility(android.view.View.INVISIBLE));

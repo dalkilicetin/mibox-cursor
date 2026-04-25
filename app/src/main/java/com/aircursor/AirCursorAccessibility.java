@@ -49,4 +49,28 @@ public class AirCursorAccessibility extends AccessibilityService {
             }
         }, null);
     }
+
+    public void performSwipe(int x1, int y1, int x2, int y2, int durationMs) {
+        Path path = new Path();
+        path.moveTo(x1, y1);
+        path.lineTo(x2, y2);
+
+        GestureDescription.StrokeDescription stroke =
+                new GestureDescription.StrokeDescription(path, 0, durationMs);
+
+        GestureDescription gesture =
+                new GestureDescription.Builder().addStroke(stroke).build();
+
+        dispatchGesture(gesture, new GestureResultCallback() {
+            @Override
+            public void onCompleted(GestureDescription gestureDescription) {
+                Log.d("A11Y", "✅ Swipe success");
+            }
+
+            @Override
+            public void onCancelled(GestureDescription gestureDescription) {
+                Log.e("A11Y", "❌ Swipe cancelled");
+            }
+        }, null);
+    }
 }

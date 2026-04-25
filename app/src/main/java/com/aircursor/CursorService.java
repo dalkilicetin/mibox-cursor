@@ -10,11 +10,11 @@ import org.json.JSONObject;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.net.*;
+import java.util.Enumeration;
 
 public class CursorService extends Service {
 
     private static final String TAG = "CursorService";
-
     private boolean running = true;
 
     @Override
@@ -107,16 +107,29 @@ public class CursorService extends Service {
         }).start();
     }
 
+    // ✅ FIXED METHOD
     private String getLocalIp() {
         try {
-            for (NetworkInterface intf : NetworkInterface.getNetworkInterfaces()) {
-                for (InetAddress addr : java.util.Collections.list(intf.getInetAddresses())) {
+            Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
+
+            while (interfaces.hasMoreElements()) {
+                NetworkInterface intf = interfaces.nextElement();
+
+                Enumeration<InetAddress> addrs = intf.getInetAddresses();
+
+                while (addrs.hasMoreElements()) {
+                    InetAddress addr = addrs.nextElement();
+
                     if (!addr.isLoopbackAddress() && addr instanceof Inet4Address) {
                         return addr.getHostAddress();
                     }
                 }
             }
-        } catch (Exception ignored) {}
+
+        } catch (Exception e) {
+            Log.e(TAG, "IP error", e);
+        }
+
         return "0.0.0.0";
     }
 

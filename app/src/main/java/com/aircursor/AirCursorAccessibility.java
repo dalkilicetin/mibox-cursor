@@ -181,6 +181,10 @@ public class AirCursorAccessibility extends AccessibilityService {
 
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
+        Log.d(TAG, "Event: type=" + event.getEventType() 
+            + " pkg=" + event.getPackageName()
+            + " class=" + event.getClassName());
+
         if (event.getEventType() == AccessibilityEvent.TYPE_VIEW_FOCUSED) {
             android.view.accessibility.AccessibilityNodeInfo node = event.getSource();
             if (node != null) {

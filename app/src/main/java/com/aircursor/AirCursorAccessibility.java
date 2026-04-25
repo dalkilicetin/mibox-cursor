@@ -57,7 +57,7 @@ public class AirCursorAccessibility extends AccessibilityService {
         super.onServiceConnected();
         instance = this;
         mainHandler = new Handler(Looper.getMainLooper());
-        Log.i(TAG, "✅ Accessibility connected");
+        Log.e(TAG, "✅ Accessibility connected");
         setupOverlay();
         // İlk yüklemede tree'yi cache'le
         mainHandler.postDelayed(this::refreshNodeCache, 1000);
@@ -85,7 +85,7 @@ public class AirCursorAccessibility extends AccessibilityService {
         params.x = 0; params.y = 0;
         mainHandler.post(() -> {
             wm.addView(cursorView, params);
-            Log.i(TAG, "Overlay added: " + screenW + "x" + screenH);
+            Log.e(TAG, "Overlay added: " + screenW + "x" + screenH);
         });
     }
 
@@ -94,7 +94,7 @@ public class AirCursorAccessibility extends AccessibilityService {
         new Thread(() -> {
             try {
                 AccessibilityNodeInfo root = getRootInActiveWindow();
-                if (root == null) { Log.w(TAG, "root=null"); return; }
+                if (root == null) { Log.e(TAG, "root=null"); return; }
                 List<NodeInfo> nodes = new ArrayList<>();
                 traverseNodes(root, nodes);
                 root.recycle();
@@ -102,7 +102,7 @@ public class AirCursorAccessibility extends AccessibilityService {
                     nodeCache.clear();
                     nodeCache.addAll(nodes);
                 }
-                Log.d(TAG, "Cache updated: " + nodes.size() + " nodes");
+                Log.e(TAG, "Cache updated: " + nodes.size() + " nodes");
             } catch (Exception e) {
                 Log.e(TAG, "refreshNodeCache: " + e.getMessage());
             }
@@ -133,7 +133,7 @@ public class AirCursorAccessibility extends AccessibilityService {
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
         int type = event.getEventType();
-        Log.d(TAG, "Event: " + type + " pkg=" + event.getPackageName());
+        Log.e(TAG, "Event: " + type + " pkg=" + event.getPackageName());
 
         if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
             type == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
@@ -148,7 +148,7 @@ public class AirCursorAccessibility extends AccessibilityService {
                 node.getBoundsInScreen(r);
                 currentFocusX = r.centerX();
                 currentFocusY = r.centerY();
-                Log.d(TAG, "Focus at: " + currentFocusX + "," + currentFocusY
+                Log.e(TAG, "Focus at: " + currentFocusX + "," + currentFocusY
                     + " label=" + node.getContentDescription());
                 node.recycle();
             }
@@ -188,14 +188,14 @@ public class AirCursorAccessibility extends AccessibilityService {
         int ty = (int) cursorY;
         NodeInfo nearest = findNearest(tx, ty);
         if (nearest != null) {
-            Log.d(TAG, "Tap → nearest: " + nearest.label + " at " + nearest.cx + "," + nearest.cy);
+            Log.e(TAG, "Tap → nearest: " + nearest.label + " at " + nearest.cx + "," + nearest.cy);
             mainHandler.post(() -> {
                 if (cursorView != null) cursorView.showClick();
             });
             // Cache'de node yoksa veya çok uzaksa direkt CENTER
             navigateTo(nearest.cx, nearest.cy);
         } else {
-            Log.w(TAG, "Tap → no nearest node, sending CENTER");
+            Log.e(TAG, "Tap → no nearest node, sending CENTER");
             injectKey(23); // DPAD_CENTER
         }
     }
@@ -259,14 +259,14 @@ public class AirCursorAccessibility extends AccessibilityService {
     public void injectText(String text) {
         new Thread(() -> {
             try { Runtime.getRuntime().exec(new String[]{"input", "text", text}); }
-            catch (Exception e) { Log.w(TAG, "Text: " + e.getMessage()); }
+            catch (Exception e) { Log.e(TAG, "Text: " + e.getMessage()); }
         }).start();
     }
 
     public void injectKey(int keyCode) {
         new Thread(() -> {
             try { Runtime.getRuntime().exec(new String[]{"input", "keyevent", String.valueOf(keyCode)}); }
-            catch (Exception e) { Log.w(TAG, "Key: " + e.getMessage()); }
+            catch (Exception e) { Log.e(TAG, "Key: " + e.getMessage()); }
         }).start();
     }
 
